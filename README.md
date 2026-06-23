@@ -45,6 +45,55 @@ OpenClaw and Hermes currently fail against the upstream Gemini safety-settings
 schema. Dogegate therefore does not install Gemini as a stable OpenClaw/Hermes
 agent model.
 
+## Antigravity Tools
+
+Dogegate treats Antigravity Tools as the main local model gateway. On the
+verified macOS setup, Antigravity Tools v4.2.6 exposes:
+
+```text
+Admin UI:  http://127.0.0.1:8045
+API base:  http://127.0.0.1:8045/v1
+Protocol:  OpenAI-compatible chat completions and model listing
+```
+
+Antigravity Tools combines account management, request scheduling, quota
+tracking, protocol adaptation, local API-key auth, LAN access control, and an
+optional Cloudflared public-access mode. Its local config is stored under:
+
+```text
+~/.antigravity_tools/
+```
+
+Useful local files:
+
+```text
+~/.antigravity_tools/gui_config.json      proxy, auth, Cloudflared, scheduling
+~/.antigravity_tools/accounts.json        account registry
+~/.antigravity_tools/token_stats.db       usage accounting
+~/.antigravity_tools/security.db          allow/deny lists and IP access logs
+~/.antigravity_tools/user_tokens.db       user token metadata
+~/.antigravity_tools/proxy_logs.db        request logs when enabled
+```
+
+The live model catalog can be larger than Dogegate's curated agent-safe list.
+Use:
+
+```bash
+./bin/codex-ccswitch-antigravity inspect-antigravity
+```
+
+This only reads local config and `/v1/models`; it does not print API keys or
+account credentials. In the current local environment, Antigravity Tools returns
+69 models, including Claude, Gemini, GPT-compatible, image, and thinking
+variants. Dogegate still keeps OpenClaw on a narrower agent-safe allowlist
+because agent/tool-shaped requests are stricter than simple chat requests.
+
+Antigravity Tools LS is a standby path with a different architecture: it bridges
+through the native Antigravity language-server process and exposes standard
+OpenAI, Anthropic, and Gemini-style APIs. It is useful as a fallback or future
+deep-compatibility route, but Dogegate currently targets Antigravity Tools on
+port 8045 as the primary pool.
+
 ## Install
 
 Clone or copy this repository, then run:
@@ -83,6 +132,12 @@ Install OpenClaw and Hermes against the same pool:
 ./bin/codex-ccswitch-antigravity install-openclaw
 ./bin/codex-ccswitch-antigravity install-hermes
 ./bin/codex-ccswitch-antigravity verify-agents
+```
+
+Inspect the local Antigravity Tools gateway:
+
+```bash
+./bin/codex-ccswitch-antigravity inspect-antigravity
 ```
 
 ## What It Changes

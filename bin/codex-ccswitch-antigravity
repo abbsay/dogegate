@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.6"
+VERSION="0.2.7"
 
 usage() {
   cat <<'USAGE'
@@ -17,6 +17,7 @@ Usage:
   codex-ccswitch-antigravity verify  [options]
   codex-ccswitch-antigravity verify-agents [options]
   codex-ccswitch-antigravity open-openclaw-dashboard [options]
+  codex-ccswitch-antigravity inspect-antigravity [options]
   codex-ccswitch-antigravity doctor  [options]
 
 Options:
@@ -43,6 +44,7 @@ Examples:
   codex-ccswitch-antigravity install-hermes
   codex-ccswitch-antigravity verify-agents
   codex-ccswitch-antigravity open-openclaw-dashboard
+  codex-ccswitch-antigravity inspect-antigravity
   codex-ccswitch-antigravity doctor
 USAGE
 }
@@ -741,6 +743,95 @@ open_openclaw_dashboard() {
   echo "openclaw_dashboard=opened"
 }
 
+inspect_antigravity() {
+  need_cmd python3
+  python3 - "$UPSTREAM_URL" <<'PY'
+import json
+import plistlib
+import sys
+import urllib.error
+import urllib.request
+from collections import Counter
+from pathlib import Path
+from urllib.parse import urljoin
+
+upstream_url = sys.argv[1].rstrip("/")
+home = Path.home()
+config_path = home / ".antigravity_tools" / "gui_config.json"
+app_info_path = Path("/Applications/Antigravity Tools.app/Contents/Info.plist")
+
+def print_kv(key, value):
+    print(f"{key}={value}")
+
+if app_info_path.exists():
+    try:
+        info = plistlib.loads(app_info_path.read_bytes())
+        print_kv("antigravity_tools_version", info.get("CFBundleShortVersionString", "unknown"))
+    except Exception:
+        print_kv("antigravity_tools_version", "unreadable")
+else:
+    print_kv("antigravity_tools_version", "not_installed")
+
+if not config_path.exists():
+    print_kv("config_found", "False")
+    raise SystemExit(0)
+
+data = json.loads(config_path.read_text())
+proxy = data.get("proxy") or {}
+cloudflared = data.get("cloudflared") or {}
+print_kv("config_found", "True")
+print_kv("config_path", str(config_path))
+print_kv("proxy_port", proxy.get("port", ""))
+print_kv("proxy_enabled", proxy.get("enabled", ""))
+print_kv("proxy_auto_start", proxy.get("auto_start", ""))
+print_kv("proxy_allow_lan_access", proxy.get("allow_lan_access", ""))
+print_kv("proxy_auth_mode", proxy.get("auth_mode", ""))
+print_kv("proxy_scheduling_mode", (proxy.get("scheduling") or {}).get("mode", ""))
+print_kv("cloudflared_enabled", cloudflared.get("enabled", ""))
+print_kv("cloudflared_mode", cloudflared.get("mode", ""))
+print_kv("cloudflared_port", cloudflared.get("port", ""))
+
+api_key = proxy.get("api_key") or ""
+headers = {}
+if api_key:
+    headers["Authorization"] = f"Bearer {api_key}"
+
+models_url = urljoin(upstream_url + "/", "models")
+print_kv("models_url", models_url)
+try:
+    req = urllib.request.Request(models_url, headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+except urllib.error.HTTPError as exc:
+    print_kv("models_query_ok", "False")
+    print_kv("models_query_error", f"HTTP {exc.code}")
+    raise SystemExit(0)
+except Exception as exc:
+    print_kv("models_query_ok", "False")
+    print_kv("models_query_error", type(exc).__name__)
+    raise SystemExit(0)
+
+models = [item.get("id", "") for item in payload.get("data", []) if item.get("id")]
+print_kv("models_query_ok", "True")
+print_kv("model_count", len(models))
+
+def family(model_id: str) -> str:
+    for prefix in ("claude", "gemini", "gpt", "deepseek", "qwen", "grok"):
+        if model_id.startswith(prefix):
+            return prefix
+    return "other"
+
+counts = Counter(family(model_id) for model_id in models)
+for name in sorted(counts):
+    print_kv(f"model_family_{name}", counts[name])
+
+for name in ("claude", "gemini", "gpt", "other"):
+    selected = [m for m in models if family(m) == name]
+    if selected:
+        print(f"{name}_models_sample=" + ",".join(selected[:20]))
+PY
+}
+
 case "$COMMAND" in
   install) install ;;
   install-openclaw) install_openclaw ;;
@@ -748,6 +839,7 @@ case "$COMMAND" in
   verify) verify ;;
   verify-agents) verify_agents ;;
   open-openclaw-dashboard) open_openclaw_dashboard ;;
+  inspect-antigravity) inspect_antigravity ;;
   doctor) doctor ;;
   *) die "unknown command: $COMMAND" ;;
 esac

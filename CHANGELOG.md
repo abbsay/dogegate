@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.7 - 2026-06-23
+
+- Add `inspect-antigravity` to summarize the local Antigravity Tools gateway,
+  proxy security flags, Cloudflared mode, and live `/v1/models` catalog without
+  printing secrets.
+- Document Antigravity Tools as Dogegate's primary local model gateway and
+  Antigravity Tools LS as the standby native-language-server route.
+
 ## 0.2.6 - 2026-06-23
 
 - Add `open-openclaw-dashboard` to recover from the OpenClaw macOS Dashboard
