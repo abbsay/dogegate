@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="0.1.0"
+
+usage() {
+  cat <<'USAGE'
+codex-ccswitch-antigravity
+
+Patch CC Switch so Codex Desktop/CLI can route through an Antigravity Pool
+OpenAI Responses-compatible gateway.
+
+Usage:
+  codex-ccswitch-antigravity install [options]
+  codex-ccswitch-antigravity verify  [options]
+  codex-ccswitch-antigravity doctor  [options]
+
+Options:
+  --provider-name NAME       CC Switch Codex provider name (default: Antigravity-Pool)
+  --model MODEL              Codex model name (default: claude-sonnet-4-6)
+  --proxy-url URL            CC Switch local proxy URL (default: http://127.0.0.1:15721/v1)
+  --upstream-url URL         Antigravity Pool upstream URL (default: http://127.0.0.1:8045/v1)
+  --ccswitch-db PATH         CC Switch sqlite database (default: ~/.cc-switch/cc-switch.db)
+  --codex-config PATH        Codex live config (default: ~/.codex/config.toml)
+  --settings-json PATH       CC Switch settings.json (default: ~/.cc-switch/settings.json)
+  --backup-dir PATH          Backup directory (default: ~/.cc-switch/backups/codex-antigravity)
+  --no-live-config           Do not patch ~/.codex/config.toml
+  --no-select-provider       Do not mark provider current in CC Switch DB
+  --restart-ccswitch         Restart CC Switch after install
+  --run-verify               Run Codex verification after install
+  --dry-run                  Show planned changes without writing
+  -h, --help                 Show this help
+
+Examples:
+  codex-ccswitch-antigravity install --restart-ccswitch --run-verify
+  codex-ccswitch-antigravity doctor
+USAGE
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+expand_path() {
+  local p="$1"
+  case "$p" in
+    "~") printf '%s\n' "$HOME" ;;
+    \~/*) printf '%s/%s\n' "$HOME" "${p#\~/}" ;;
+    *) printf '%s\n' "$p" ;;
+  esac
+}
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+COMMAND="${1:-}"
+if [[ -z "$COMMAND" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+PROVIDER_NAME="Antigravity-Pool"
+MODEL="claude-sonnet-4-6"
+PROXY_URL="http://127.0.0.1:15721/v1"
+UPSTREAM_URL="http://127.0.0.1:8045/v1"
+CCSWITCH_DB="~/.cc-switch/cc-switch.db"
+CODEX_CONFIG="~/.codex/config.toml"
+SETTINGS_JSON="~/.cc-switch/settings.json"
+BACKUP_DIR="~/.cc-switch/backups/codex-antigravity"
+PATCH_LIVE_CONFIG=1
+SELECT_PROVIDER=1
+RESTART_CCSWITCH=0
+RUN_VERIFY=0
+DRY_RUN=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --provider-name) PROVIDER_NAME="${2:?}"; shift 2 ;;
+    --model) MODEL="${2:?}"; shift 2 ;;
+    --proxy-url) PROXY_URL="${2:?}"; shift 2 ;;
+    --upstream-url) UPSTREAM_URL="${2:?}"; shift 2 ;;
+    --ccswitch-db) CCSWITCH_DB="${2:?}"; shift 2 ;;
+    --codex-config) CODEX_CONFIG="${2:?}"; shift 2 ;;
+    --settings-json) SETTINGS_JSON="${2:?}"; shift 2 ;;
+    --backup-dir) BACKUP_DIR="${2:?}"; shift 2 ;;
+    --no-live-config) PATCH_LIVE_CONFIG=0; shift ;;
+    --no-select-provider) SELECT_PROVIDER=0; shift ;;
+    --restart-ccswitch) RESTART_CCSWITCH=1; shift ;;
+    --run-verify) RUN_VERIFY=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --version) echo "$VERSION"; exit 0 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+
+CCSWITCH_DB="$(expand_path "$CCSWITCH_DB")"
+CODEX_CONFIG="$(expand_path "$CODEX_CONFIG")"
+SETTINGS_JSON="$(expand_path "$SETTINGS_JSON")"
+BACKUP_DIR="$(expand_path "$BACKUP_DIR")"
+
+doctor() {
+  need_cmd python3
+  [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
+  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$CODEX_CONFIG" <<'PY'
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+db_path, provider_name, codex_config = sys.argv[1:]
+conn = sqlite3.connect(db_path)
+provider = conn.execute(
+    "select id, is_current, settings_config from providers where app_type='codex' and name=?",
+    (provider_name,),
+).fetchone()
+proxy = conn.execute(
+    "select proxy_enabled, enabled, listen_address, listen_port from proxy_config where app_type='codex'"
+).fetchone()
+backup = conn.execute(
+    "select original_config from proxy_live_backup where app_type='codex'"
+).fetchone()
+conn.close()
+
+print(f"ccswitch_db={db_path}")
+print(f"provider_found={bool(provider)}")
+if provider:
+    cfg = json.loads(provider[2]).get("config", "")
+    print(f"provider_id={provider[0]}")
+    print(f"provider_is_current={provider[1]}")
+    print(f"provider_config_has_custom={'[model_providers.custom]' in cfg}")
+    for line in cfg.splitlines():
+        if line.strip().startswith(("model_provider", "model =", "base_url", "wire_api")):
+            print(f"provider_config: {line}")
+if proxy:
+    print(f"proxy_enabled={proxy[0]} enabled={proxy[1]} listen={proxy[2]}:{proxy[3]}")
+print(f"live_backup_found={bool(backup)}")
+if backup:
+    cfg = json.loads(backup[0]).get("config", "")
+    print(f"live_backup_has_custom={'[model_providers.custom]' in cfg}")
+if Path(codex_config).exists():
+    text = Path(codex_config).read_text()
+    print(f"codex_config={codex_config}")
+    print(f"codex_config_has_custom={'[model_providers.custom]' in text}")
+    for line in text.splitlines():
+        if line.strip().startswith(("model_provider", "model =", "base_url", "wire_api")):
+            print(f"codex_config: {line}")
+else:
+    print(f"codex_config_missing={codex_config}")
+PY
+}
+
+install() {
+  need_cmd python3
+  [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
+
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    mkdir -p "$BACKUP_DIR"
+    local stamp
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    cp "$CCSWITCH_DB" "$BACKUP_DIR/cc-switch.db.$stamp.bak"
+    [[ ! -f "$CODEX_CONFIG" ]] || cp "$CODEX_CONFIG" "$BACKUP_DIR/config.toml.$stamp.bak"
+    [[ ! -f "$SETTINGS_JSON" ]] || cp "$SETTINGS_JSON" "$BACKUP_DIR/settings.json.$stamp.bak"
+    echo "backup_dir=$BACKUP_DIR"
+  fi
+
+  python3 - "$CCSWITCH_DB" "$CODEX_CONFIG" "$SETTINGS_JSON" "$PROVIDER_NAME" "$MODEL" "$PROXY_URL" "$UPSTREAM_URL" "$PATCH_LIVE_CONFIG" "$SELECT_PROVIDER" "$DRY_RUN" <<'PY'
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+(
+    db_path,
+    codex_config,
+    settings_json,
+    provider_name,
+    model,
+    proxy_url,
+    upstream_url,
+    patch_live_config,
+    select_provider,
+    dry_run,
+) = sys.argv[1:]
+patch_live_config = patch_live_config == "1"
+select_provider = select_provider == "1"
+dry_run = dry_run == "1"
+
+TOP_LEVEL_KEYS = {
+    "model_provider",
+    "model",
+    "review_model",
+    "disable_response_storage",
+    "base_url",
+    "wire_api",
+}
+
+def transform_config(text: str, provider_url: str) -> str:
+    lines = text.splitlines()
+    kept = []
+    current_section = None
+    skipping_provider = False
+    saw_reasoning = False
+
+    for raw in lines:
+        stripped = raw.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            current_section = stripped
+            skipping_provider = stripped == "[model_providers.custom]"
+            if skipping_provider:
+                continue
+
+        if skipping_provider:
+            continue
+
+        if current_section is None and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in TOP_LEVEL_KEYS:
+                continue
+            if key == "model_reasoning_effort":
+                saw_reasoning = True
+
+        if stripped.startswith("model_reasoning_effort"):
+            saw_reasoning = True
+        kept.append(raw)
+
+    header = [
+        'model_provider = "custom"',
+        f'model = "{model}"',
+        f'review_model = "{model}"',
+        "disable_response_storage = true",
+    ]
+    if not saw_reasoning:
+        header.append('model_reasoning_effort = "medium"')
+
+    provider = [
+        "",
+        "[model_providers.custom]",
+        f'name = "{provider_name}"',
+        f'base_url = "{provider_url}"',
+        'wire_api = "responses"',
+        "request_max_retries = 4",
+        "stream_max_retries = 10",
+        "stream_idle_timeout_ms = 300000",
+    ]
+
+    body = "\n".join(line for line in kept).strip()
+    return "\n".join(header) + ("\n" + body if body else "") + "\n" + "\n".join(provider) + "\n"
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+provider = conn.execute(
+    "select id, settings_config from providers where app_type='codex' and name=?",
+    (provider_name,),
+).fetchone()
+if not provider:
+    raise SystemExit(f"provider not found in CC Switch DB: {provider_name}")
+
+provider_payload = json.loads(provider["settings_config"])
+provider_payload["config"] = transform_config(provider_payload.get("config", ""), upstream_url)
+
+updates = []
+updates.append(("provider.settings_config", provider_payload["config"]))
+
+common = conn.execute("select value from settings where key='common_config_codex'").fetchone()
+common_value = transform_config(common["value"] if common else "", proxy_url)
+updates.append(("settings.common_config_codex", common_value))
+
+backup = conn.execute("select original_config from proxy_live_backup where app_type='codex'").fetchone()
+backup_payload = None
+if backup:
+    backup_payload = json.loads(backup["original_config"])
+    backup_payload["config"] = transform_config(backup_payload.get("config", ""), proxy_url)
+    updates.append(("proxy_live_backup.original_config.config", backup_payload["config"]))
+
+live_text = None
+if patch_live_config and Path(codex_config).exists():
+    live_text = transform_config(Path(codex_config).read_text(), proxy_url)
+    updates.append(("codex.live_config", live_text))
+
+if dry_run:
+    print("dry_run=true")
+    for name, value in updates:
+        print(f"--- {name} ---")
+        for line in value.splitlines():
+            if line.strip().startswith(("model_provider", "model =", "review_model", "base_url", "wire_api", "[model_providers.custom]")):
+                print(line)
+    raise SystemExit(0)
+
+conn.execute(
+    "update providers set settings_config=? where app_type='codex' and id=?",
+    (json.dumps(provider_payload, ensure_ascii=False), provider["id"]),
+)
+
+if select_provider:
+    conn.execute("update providers set is_current=0 where app_type='codex'")
+    conn.execute("update providers set is_current=1 where app_type='codex' and id=?", (provider["id"],))
+
+if common:
+    conn.execute("update settings set value=? where key='common_config_codex'", (common_value,))
+else:
+    conn.execute("insert into settings(key, value) values('common_config_codex', ?)", (common_value,))
+
+if backup_payload is not None:
+    conn.execute(
+        "update proxy_live_backup set original_config=? where app_type='codex'",
+        (json.dumps(backup_payload, ensure_ascii=False),),
+    )
+
+conn.commit()
+conn.close()
+
+if live_text is not None:
+    Path(codex_config).write_text(live_text)
+
+settings_path = Path(settings_json)
+if select_provider and settings_path.exists():
+    data = json.loads(settings_path.read_text())
+    data["currentProviderCodex"] = provider_name
+    settings_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+print(f"provider={provider_name}")
+print(f"model={model}")
+print(f"codex_live_proxy={proxy_url}")
+print(f"ccswitch_upstream={upstream_url}")
+print("install=ok")
+PY
+
+  if [[ "$RESTART_CCSWITCH" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
+    pkill -f '/Applications/CC Switch.app/Contents/MacOS/cc-switch' >/dev/null 2>&1 || true
+    open -a 'CC Switch'
+    sleep 2
+  fi
+
+  if [[ "$RUN_VERIFY" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
+    verify
+  fi
+}
+
+verify() {
+  need_cmd codex
+  codex --ask-for-approval never --sandbox read-only exec "Reply with exactly: pong"
+}
+
+case "$COMMAND" in
+  install) install ;;
+  verify) verify ;;
+  doctor) doctor ;;
+  *) die "unknown command: $COMMAND" ;;
+esac

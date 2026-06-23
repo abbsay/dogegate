@@ -1,0 +1,154 @@
+# codex-ccswitch-antigravity
+
+Make Codex Desktop and Codex CLI route through a CC Switch profile backed by an
+Antigravity Pool OpenAI-compatible gateway.
+
+This project packages the setup that was proven locally:
+
+```text
+Codex Desktop / CLI
+  -> CC Switch local proxy: http://127.0.0.1:15721/v1
+  -> Antigravity Pool gateway: http://127.0.0.1:8045/v1
+  -> model: claude-sonnet-4-6
+```
+
+The main problem it solves is that recent Codex builds no longer route custom
+providers from top-level `base_url` / `wire_api` fields alone. Codex needs an
+explicit `model_provider = "custom"` plus a `[model_providers.custom]` block.
+Some CC Switch live takeover flows can still write the older shape, causing
+Codex Desktop to fall back to the official OpenAI provider.
+
+## Status
+
+Experimental but usable. The local setup has been verified with:
+
+- Codex `0.136.0`
+- CC Switch local proxy on `127.0.0.1:15721`
+- Antigravity Pool upstream on `127.0.0.1:8045`
+- OpenAI Responses-compatible `/v1/responses`
+
+## Install
+
+Clone or copy this repository, then run:
+
+```bash
+chmod +x ./bin/codex-ccswitch-antigravity
+./bin/codex-ccswitch-antigravity install --restart-ccswitch --run-verify
+```
+
+Defaults:
+
+```text
+provider name: Antigravity-Pool
+model:         claude-sonnet-4-6
+Codex proxy:   http://127.0.0.1:15721/v1
+upstream:      http://127.0.0.1:8045/v1
+CC Switch DB:  ~/.cc-switch/cc-switch.db
+Codex config:  ~/.codex/config.toml
+```
+
+Custom example:
+
+```bash
+./bin/codex-ccswitch-antigravity install \
+  --provider-name Antigravity-Pool \
+  --model claude-sonnet-4-6 \
+  --proxy-url http://127.0.0.1:15721/v1 \
+  --upstream-url http://127.0.0.1:8045/v1 \
+  --restart-ccswitch \
+  --run-verify
+```
+
+## What It Changes
+
+The installer backs up files first, then patches:
+
+- `~/.cc-switch/cc-switch.db`
+  - `providers.settings_config` for the selected Codex provider
+  - `settings.common_config_codex`
+  - `proxy_live_backup.original_config` when present
+- `~/.cc-switch/settings.json`
+  - sets `currentProviderCodex`
+- `~/.codex/config.toml`
+  - writes the current live Codex provider block unless `--no-live-config` is set
+
+The two URLs intentionally differ:
+
+```text
+~/.codex/config.toml        -> base_url = "http://127.0.0.1:15721/v1"
+CC Switch provider upstream -> base_url = "http://127.0.0.1:8045/v1"
+```
+
+If both are `15721`, CC Switch forwards to itself and Codex will reconnect in a
+loop. If Codex only has top-level `base_url`, it can still use `provider: openai`
+and hit the official API.
+
+## Doctor
+
+Inspect the current setup without changing anything:
+
+```bash
+./bin/codex-ccswitch-antigravity doctor
+```
+
+Useful healthy signs:
+
+```text
+provider_found=True
+provider_config_has_custom=True
+codex_config_has_custom=True
+codex_config: model_provider = "custom"
+codex_config: base_url = "http://127.0.0.1:15721/v1"
+provider_config: base_url = "http://127.0.0.1:8045/v1"
+```
+
+## Verify
+
+Run:
+
+```bash
+./bin/codex-ccswitch-antigravity verify
+```
+
+Expected Codex header:
+
+```text
+model: claude-sonnet-4-6
+provider: custom
+```
+
+Expected answer:
+
+```text
+pong
+```
+
+## Rollback
+
+Backups are written to:
+
+```text
+~/.cc-switch/backups/codex-antigravity/
+```
+
+Restore manually:
+
+```bash
+cp ~/.cc-switch/backups/codex-antigravity/cc-switch.db.YYYYMMDD-HHMMSS.bak ~/.cc-switch/cc-switch.db
+cp ~/.cc-switch/backups/codex-antigravity/config.toml.YYYYMMDD-HHMMSS.bak ~/.codex/config.toml
+cp ~/.cc-switch/backups/codex-antigravity/settings.json.YYYYMMDD-HHMMSS.bak ~/.cc-switch/settings.json
+open -a "CC Switch"
+```
+
+## Release Plan
+
+- `0.1.x`: support the proven Antigravity-Pool setup.
+- `0.2.x`: add safer TOML parsing and multi-provider profiles.
+- `0.3.x`: add a small test fixture suite for CC Switch DB migrations.
+- `1.0.0`: stable installer, rollback command, and documented compatibility matrix.
+
+## Notes
+
+This tool preserves auth payloads stored by CC Switch but never prints them. It
+only rewrites provider routing config.
+
