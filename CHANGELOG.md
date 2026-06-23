@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 - 2026-06-23
+
+- Add OpenClaw `agents.defaults.models` allowlist for the configured pool model.
+- Keep OpenClaw agent entries constrained to the same pool model.
+- Reduce the chance that Dashboard model changes select unsupported built-in catalog models.
+
 ## 0.2.2 - 2026-06-23
 
 - Clear stale OpenClaw per-session model/auth overrides during `install-openclaw`.

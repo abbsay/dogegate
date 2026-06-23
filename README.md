@@ -100,6 +100,7 @@ The installer backs up files first, then patches:
 - `~/.openclaw/openclaw.json`
   - points OpenClaw's OpenAI provider at Antigravity Pool
   - sets the default model to `openai/claude-sonnet-4-6`
+  - adds an OpenClaw model allowlist for the configured pool model
 - `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`
   - stores the Antigravity Pool API key in OpenClaw's local auth profile
 - `~/.openclaw/agents/main/sessions/sessions.json`

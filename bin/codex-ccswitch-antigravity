@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.2"
+VERSION="0.2.3"
 
 usage() {
   cat <<'USAGE'
@@ -447,10 +447,13 @@ provider.update({
     "models": models,
 })
 primary = f"openai/{model}"
-data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})["primary"] = primary
+agent_defaults = data.setdefault("agents", {}).setdefault("defaults", {})
+agent_defaults.setdefault("model", {})["primary"] = primary
+agent_defaults["models"] = {primary: {}}
 for agent in data.get("agents", {}).get("list", []):
     if "model" in agent:
         agent["model"] = primary
+    agent["models"] = {primary: {}}
 
 sessions_file = Path(sessions_path)
 sessions = None
