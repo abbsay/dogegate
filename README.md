@@ -1,7 +1,6 @@
 # codex-ccswitch-antigravity
 
-Make Codex Desktop and Codex CLI route through a CC Switch profile backed by an
-Antigravity Pool OpenAI-compatible gateway.
+Make local coding agents route through a CC Switch / Antigravity Pool setup.
 
 For the full system map, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -29,10 +28,10 @@ Experimental but usable. The local setup has been verified with:
 - Antigravity Pool upstream on `127.0.0.1:8045`
 - OpenAI Responses-compatible `/v1/responses`
 
-Current v0.1.0 automation covers Codex CLI and Codex Desktop. The broader
-Dogegate stack is intended to cover Claude Code, Claude Cowork, Codex CLI, and
-Codex Desktop through CC Switch, with Antigravity Tools as the primary upstream
-and Antigravity Tools LS as a standby upstream.
+Current v0.2.0 automation covers Codex CLI, Codex Desktop, OpenClaw, and Hermes
+Agent. The broader Dogegate stack is intended to cover Claude Code, Claude
+Cowork, Codex CLI, Codex Desktop, OpenClaw, and Hermes through CC Switch and
+Antigravity Tools, with Antigravity Tools LS as a standby upstream.
 
 ## Install
 
@@ -66,6 +65,14 @@ Custom example:
   --run-verify
 ```
 
+Install OpenClaw and Hermes against the same pool:
+
+```bash
+./bin/codex-ccswitch-antigravity install-openclaw
+./bin/codex-ccswitch-antigravity install-hermes
+./bin/codex-ccswitch-antigravity verify-agents
+```
+
 ## What It Changes
 
 The installer backs up files first, then patches:
@@ -78,6 +85,15 @@ The installer backs up files first, then patches:
   - sets `currentProviderCodex`
 - `~/.codex/config.toml`
   - writes the current live Codex provider block unless `--no-live-config` is set
+- `~/.openclaw/openclaw.json`
+  - points OpenClaw's OpenAI provider at Antigravity Pool
+  - sets the default model to `openai/claude-sonnet-4-6`
+- `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`
+  - stores the Antigravity Pool API key in OpenClaw's local auth profile
+- `~/.hermes/config.yaml`
+  - sets Hermes to `provider: custom`
+  - points `model.base_url` at Antigravity Pool
+  - sets `model.max_tokens: 4096` for pool compatibility
 
 The two URLs intentionally differ:
 
@@ -130,6 +146,15 @@ Expected answer:
 pong
 ```
 
+For OpenClaw and Hermes:
+
+```bash
+./bin/codex-ccswitch-antigravity verify-agents
+```
+
+Expected outputs include two `pong` responses, one from OpenClaw and one from
+Hermes.
+
 ## Rollback
 
 Backups are written to:
@@ -149,9 +174,9 @@ open -a "CC Switch"
 
 ## Release Plan
 
-- `0.1.x`: support the proven Antigravity-Pool setup.
-- `0.2.x`: add safer TOML parsing and multi-provider profiles.
-- `0.3.x`: add a small test fixture suite for CC Switch DB migrations.
+- `0.1.x`: support the proven Codex Antigravity-Pool setup.
+- `0.2.x`: add OpenClaw and Hermes Agent support.
+- `0.3.x`: add safer TOML/YAML parsing, tests, and multi-provider profiles.
 - `1.0.0`: stable installer, rollback command, and documented compatibility matrix.
 
 ## Notes

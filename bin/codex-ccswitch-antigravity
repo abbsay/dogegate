@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 usage() {
   cat <<'USAGE'
@@ -12,7 +12,10 @@ OpenAI Responses-compatible gateway.
 
 Usage:
   codex-ccswitch-antigravity install [options]
+  codex-ccswitch-antigravity install-openclaw [options]
+  codex-ccswitch-antigravity install-hermes [options]
   codex-ccswitch-antigravity verify  [options]
+  codex-ccswitch-antigravity verify-agents [options]
   codex-ccswitch-antigravity doctor  [options]
 
 Options:
@@ -33,6 +36,9 @@ Options:
 
 Examples:
   codex-ccswitch-antigravity install --restart-ccswitch --run-verify
+  codex-ccswitch-antigravity install-openclaw
+  codex-ccswitch-antigravity install-hermes
+  codex-ccswitch-antigravity verify-agents
   codex-ccswitch-antigravity doctor
 USAGE
 }
@@ -56,6 +62,10 @@ need_cmd() {
 }
 
 COMMAND="${1:-}"
+if [[ "$COMMAND" == "--version" ]]; then
+  echo "$VERSION"
+  exit 0
+fi
 if [[ -z "$COMMAND" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
   usage
   exit 0
@@ -345,9 +355,235 @@ verify() {
   codex --ask-for-approval never --sandbox read-only exec "Reply with exactly: pong"
 }
 
+get_pool_token_python='
+import json
+import sqlite3
+import sys
+
+db_path, provider_name = sys.argv[1:]
+conn = sqlite3.connect(db_path)
+row = conn.execute(
+    "select settings_config from providers where app_type=? and name=?",
+    ("codex", provider_name),
+).fetchone()
+conn.close()
+if not row:
+    raise SystemExit(f"provider not found in CC Switch DB: {provider_name}")
+payload = json.loads(row[0])
+token = (payload.get("auth") or {}).get("OPENAI_API_KEY") or ""
+if not token:
+    raise SystemExit(f"provider has no OPENAI_API_KEY token: {provider_name}")
+print(token)
+'
+
+install_openclaw() {
+  need_cmd python3
+  [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
+  local openclaw_config="$HOME/.openclaw/openclaw.json"
+  local openclaw_state="$HOME/.openclaw/agents/main/agent/openclaw-agent.sqlite"
+  [[ -f "$openclaw_config" ]] || die "OpenClaw config not found: $openclaw_config"
+  [[ -f "$openclaw_state" ]] || die "OpenClaw auth state not found: $openclaw_state"
+
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    mkdir -p "$HOME/.openclaw/backups/dogegate"
+    local stamp
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    cp "$openclaw_config" "$HOME/.openclaw/backups/dogegate/openclaw.json.$stamp.bak"
+    cp "$openclaw_state" "$HOME/.openclaw/backups/dogegate/openclaw-agent.sqlite.$stamp.bak"
+    echo "backup_dir=$HOME/.openclaw/backups/dogegate"
+  fi
+
+  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$UPSTREAM_URL" "$DRY_RUN" "$openclaw_config" "$openclaw_state" <<'PY'
+import json
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+db_path, provider_name, model, upstream_url, dry_run, config_path, state_path = sys.argv[1:]
+dry_run = dry_run == "1"
+conn = sqlite3.connect(db_path)
+row = conn.execute(
+    "select settings_config from providers where app_type='codex' and name=?",
+    (provider_name,),
+).fetchone()
+conn.close()
+if not row:
+    raise SystemExit(f"provider not found in CC Switch DB: {provider_name}")
+token = (json.loads(row[0]).get("auth") or {}).get("OPENAI_API_KEY") or ""
+if not token:
+    raise SystemExit(f"provider has no OPENAI_API_KEY token: {provider_name}")
+
+cfg_path = Path(config_path)
+data = json.loads(cfg_path.read_text())
+models = [
+    {
+        "id": model,
+        "name": model,
+        "api": "openai-responses",
+        "baseUrl": upstream_url,
+        "reasoning": True,
+        "input": ["text", "image"],
+        "contextWindow": 1000000,
+        "contextTokens": 900000,
+        "params": {"store": False, "responsesCompactThreshold": 900000},
+        "compat": {
+            "supportsStore": False,
+            "supportsReasoningEffort": True,
+            "supportedReasoningEfforts": ["minimal", "low", "medium", "high", "xhigh"],
+            "thinkingFormat": "openai",
+        },
+    },
+    {
+        "id": "gemini-3.1-pro-high",
+        "name": "gemini-3.1-pro-high",
+        "api": "openai-responses",
+        "baseUrl": upstream_url,
+        "reasoning": True,
+        "input": ["text", "image"],
+        "contextWindow": 1000000,
+        "contextTokens": 900000,
+        "params": {"store": False, "responsesCompactThreshold": 900000},
+        "compat": {
+            "supportsStore": False,
+            "supportsReasoningEffort": True,
+            "supportedReasoningEfforts": ["minimal", "low", "medium", "high", "xhigh"],
+            "thinkingFormat": "openai",
+        },
+    },
+]
+provider = data.setdefault("models", {}).setdefault("providers", {}).setdefault("openai", {})
+provider.update({
+    "baseUrl": upstream_url,
+    "auth": "api-key",
+    "api": "openai-responses",
+    "contextWindow": 1000000,
+    "contextTokens": 900000,
+    "models": models,
+})
+primary = f"openai/{model}"
+data.setdefault("agents", {}).setdefault("defaults", {}).setdefault("model", {})["primary"] = primary
+for agent in data.get("agents", {}).get("list", []):
+    if "model" in agent:
+        agent["model"] = primary
+
+if dry_run:
+    print("dry_run=true")
+    print(f"openclaw_model={primary}")
+    print(f"openclaw_baseUrl={upstream_url}")
+    raise SystemExit(0)
+
+cfg_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+conn = sqlite3.connect(state_path)
+now = int(time.time() * 1000)
+store = {"version": 1, "profiles": {"openai:manual": {"type": "api_key", "provider": "openai", "key": token}}}
+state = {"version": 1, "lastGood": {"openai": "openai:manual"}, "usageStats": {}}
+conn.execute("delete from auth_profile_store where store_key='primary'")
+conn.execute("insert into auth_profile_store(store_key, store_json, updated_at) values('primary', ?, ?)", (json.dumps(store, ensure_ascii=False), now))
+conn.execute("delete from auth_profile_state where state_key='primary'")
+conn.execute("insert into auth_profile_state(state_key, state_json, updated_at) values('primary', ?, ?)", (json.dumps(state, ensure_ascii=False), now))
+conn.commit()
+conn.close()
+print(f"openclaw_model={primary}")
+print(f"openclaw_baseUrl={upstream_url}")
+print("install_openclaw=ok")
+PY
+}
+
+install_hermes() {
+  need_cmd python3
+  [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
+  local hermes_config="$HOME/.hermes/config.yaml"
+  [[ -f "$hermes_config" ]] || die "Hermes config not found: $hermes_config"
+
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    mkdir -p "$HOME/.hermes/backups/dogegate"
+    local stamp
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    cp "$hermes_config" "$HOME/.hermes/backups/dogegate/config.yaml.$stamp.bak"
+    [[ ! -f "$HOME/.hermes/.env" ]] || cp "$HOME/.hermes/.env" "$HOME/.hermes/backups/dogegate/env.$stamp.bak"
+    echo "backup_dir=$HOME/.hermes/backups/dogegate"
+  fi
+
+  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$UPSTREAM_URL" "$DRY_RUN" "$hermes_config" <<'PY'
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+try:
+    import yaml
+except Exception as exc:
+    raise SystemExit("PyYAML is required for Hermes config editing") from exc
+
+db_path, provider_name, model, upstream_url, dry_run, config_path = sys.argv[1:]
+dry_run = dry_run == "1"
+conn = sqlite3.connect(db_path)
+row = conn.execute(
+    "select settings_config from providers where app_type='codex' and name=?",
+    (provider_name,),
+).fetchone()
+conn.close()
+if not row:
+    raise SystemExit(f"provider not found in CC Switch DB: {provider_name}")
+token = (json.loads(row[0]).get("auth") or {}).get("OPENAI_API_KEY") or ""
+if not token:
+    raise SystemExit(f"provider has no OPENAI_API_KEY token: {provider_name}")
+
+cfg_path = Path(config_path)
+data = yaml.safe_load(cfg_path.read_text()) or {}
+model_cfg = data.setdefault("model", {})
+model_cfg.update({
+    "default": model,
+    "provider": "custom",
+    "base_url": upstream_url,
+    "api_key": token,
+    "api_mode": "chat_completions",
+    "max_tokens": 4096,
+})
+customs = data.get("custom_providers") or []
+customs = [c for c in customs if c.get("name") != "antigravity-pool"]
+customs.append({
+    "name": "antigravity-pool",
+    "base_url": upstream_url,
+    "api_key": token,
+    "api_mode": "chat_completions",
+    "models": {
+        model: {"context_length": 1000000, "max_completion_tokens": 4096},
+        "gemini-3.1-pro-high": {"context_length": 1000000, "max_completion_tokens": 4096},
+    },
+})
+data["custom_providers"] = customs
+
+if dry_run:
+    print("dry_run=true")
+    print(f"hermes_provider=custom")
+    print(f"hermes_model={model}")
+    print(f"hermes_base_url={upstream_url}")
+    print("hermes_max_tokens=4096")
+    raise SystemExit(0)
+
+cfg_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+print("hermes_provider=custom")
+print(f"hermes_model={model}")
+print(f"hermes_base_url={upstream_url}")
+print("hermes_max_tokens=4096")
+print("install_hermes=ok")
+PY
+}
+
+verify_agents() {
+  "$HOME/.openclaw/bin/openclaw" infer model run --model "openai/$MODEL" --prompt "Reply with exactly: pong"
+  "$HOME/.local/bin/hermes" -z "Reply with exactly: pong" --ignore-rules
+}
+
 case "$COMMAND" in
   install) install ;;
+  install-openclaw) install_openclaw ;;
+  install-hermes) install_hermes ;;
   verify) verify ;;
+  verify-agents) verify_agents ;;
   doctor) doctor ;;
   *) die "unknown command: $COMMAND" ;;
 esac

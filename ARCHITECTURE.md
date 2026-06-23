@@ -3,9 +3,9 @@
 Dogegate is a reusable configuration layer for routing local coding agents
 through CC Switch and Antigravity Tools.
 
-The first shipped version productizes the Codex path. The broader system also
-serves Claude Code and Claude Cowork, which are already proven locally and are
-planned for installer support in a later release.
+The first shipped version productized the Codex path. Version 0.2.0 adds
+OpenClaw and Hermes Agent support. Claude Code and Claude Cowork remain proven
+locally and are planned for installer support in a later release.
 
 ## System Map
 
@@ -16,6 +16,8 @@ flowchart LR
     ClaudeCowork["Claude Cowork"]
     CodexCLI["Codex CLI"]
     CodexDesktop["Codex Desktop"]
+    OpenClaw["OpenClaw"]
+    Hermes["Hermes Agent"]
   end
 
   subgraph Switch["Local switching layer"]
@@ -37,6 +39,8 @@ flowchart LR
   ClaudeCowork --> CCSwitch
   CodexCLI --> CCSwitch
   CodexDesktop --> CCSwitch
+  OpenClaw --> AGT
+  Hermes --> AGT
 
   CCSwitch --> AGT
   CCSwitch -. planned failover .-> AGLS
@@ -47,7 +51,7 @@ flowchart LR
   AGLS -. standby .-> Models
 ```
 
-## Current v0.1.0 Scope
+## Codex Path
 
 ```mermaid
 flowchart LR
@@ -65,6 +69,24 @@ flowchart LR
   AGT --> Model
 ```
 
+## Current v0.2.0 Agent Scope
+
+```mermaid
+flowchart LR
+  OpenClaw["OpenClaw\n~/.openclaw/openclaw.json"]
+  OpenClawAuth["OpenClaw auth sqlite\nopenai:manual"]
+  Hermes["Hermes Agent\n~/.hermes/config.yaml"]
+  AGT["Antigravity Tools\n127.0.0.1:8045/v1"]
+  Claude["claude-sonnet-4-6"]
+  Gemini["gemini-3.1-pro-high"]
+
+  OpenClaw --> OpenClawAuth
+  OpenClawAuth --> AGT
+  Hermes --> AGT
+  AGT --> Claude
+  AGT --> Gemini
+```
+
 ## Roles
 
 | Component | Role | Current state |
@@ -76,6 +98,8 @@ flowchart LR
 | Claude Cowork | Companion coding agent client routed through the shared proxy stack. | Proven locally, not automated in v0.1.0 |
 | Codex CLI | Codex command-line client. | Automated in v0.1.0 |
 | Codex Desktop | Codex desktop app. | Automated in v0.1.0 |
+| OpenClaw | Local multi-agent client using an OpenAI Responses provider profile. | Automated in v0.2.0 |
+| Hermes Agent | Local coding agent with a custom OpenAI-compatible provider. | Automated in v0.2.0 |
 
 ## Why Codex Needs Special Handling
 
@@ -127,13 +151,15 @@ Dogegate patches these local files and records backups before changing them:
 | `~/.codex/config.toml` | Codex live provider config. |
 | `~/.cc-switch/cc-switch.db` | CC-Switch provider templates, common Codex config, and live backup. |
 | `~/.cc-switch/settings.json` | Current Codex provider selection. |
+| `~/.openclaw/openclaw.json` | OpenClaw provider and default model config. |
+| `~/.openclaw/agents/main/agent/openclaw-agent.sqlite` | OpenClaw local API key profile. |
+| `~/.hermes/config.yaml` | Hermes custom provider config. |
 
 ## Version Roadmap
 
 | Version | Goal |
 | --- | --- |
 | `0.1.x` | Stable Codex CLI/Desktop routing through CC-Switch and Antigravity Tools. |
-| `0.2.x` | Add Claude Code and Claude Cowork configuration support. |
+| `0.2.x` | Add OpenClaw and Hermes Agent support. |
 | `0.3.x` | Add Antigravity Tools LS failover and health checks. |
 | `1.0.0` | Compatibility matrix, rollback command, and tested multi-client profiles. |
-
