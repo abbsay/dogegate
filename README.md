@@ -83,10 +83,23 @@ Use:
 ```
 
 This only reads local config and `/v1/models`; it does not print API keys or
-account credentials. In the current local environment, Antigravity Tools returns
-69 models, including Claude, Gemini, GPT-compatible, image, and thinking
-variants. Dogegate still keeps OpenClaw on a narrower agent-safe allowlist
-because agent/tool-shaped requests are stricter than simple chat requests.
+account credentials. Dogegate uses the same Antigravity Tools metadata during
+install by default:
+
+- reads the local proxy port and API key from `gui_config.json`
+- queries `/v1/models` for the current model catalog
+- merges that live catalog with Dogegate's known working agent aliases
+- writes the merged catalog to CC Switch, OpenClaw, and Hermes
+- keeps OpenClaw on a narrower agent-safe allowlist
+
+Disable this behavior with `--no-auto-antigravity`, or override the catalog
+manually with `--pool-models model-a,model-b`.
+
+In the current local environment, Antigravity Tools returns 69 models. After
+merging Dogegate's known aliases, the install catalog contains 72 models,
+including Claude, Gemini, GPT-compatible, image, and thinking variants. OpenClaw
+still uses a narrower agent-safe allowlist because agent/tool-shaped requests
+are stricter than simple chat requests.
 
 Antigravity Tools LS is a standby path with a different architecture: it bridges
 through the native Antigravity language-server process and exposes standard
@@ -112,6 +125,13 @@ Codex proxy:   http://127.0.0.1:15721/v1
 upstream:      http://127.0.0.1:8045/v1
 CC Switch DB:  ~/.cc-switch/cc-switch.db
 Codex config:  ~/.codex/config.toml
+```
+
+By default the installer auto-discovers the Antigravity Tools local proxy
+metadata. To keep using only Dogegate's built-in fallback catalog:
+
+```bash
+./bin/codex-ccswitch-antigravity install --no-auto-antigravity
 ```
 
 Custom example:

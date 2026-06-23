@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 - 2026-06-23
+
+- Make Antigravity Tools the source of truth for pool metadata by default.
+- Auto-read `~/.antigravity_tools/gui_config.json` for proxy port and local API
+  key during install.
+- Auto-query Antigravity Tools `/v1/models` and merge the live model catalog
+  with Dogegate's known working agent aliases.
+- Ensure the CC Switch Codex proxy is enabled on `127.0.0.1:15721` during
+  install.
+- Stop CC Switch before writing its database when `--restart-ccswitch` is used,
+  preventing the app from flushing stale in-memory provider state over the new
+  config on exit.
+- Add `--no-auto-antigravity` to preserve the previous fixed-catalog behavior.
+
 ## 0.2.7 - 2026-06-23
 
 - Add `inspect-antigravity` to summarize the local Antigravity Tools gateway,

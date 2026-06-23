@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.7"
+VERSION="0.3.0"
 
 usage() {
   cat <<'USAGE'
@@ -25,6 +25,7 @@ Options:
   --model MODEL              Codex model name (default: claude-sonnet-4-6)
   --pool-models CSV          Pool model ids exposed to agents and pickers
   --agent-models CSV         Pool model ids allowed for OpenClaw agent sessions
+  --no-auto-antigravity      Do not read Antigravity Tools config or /v1/models
   --proxy-url URL            CC Switch local proxy URL (default: http://127.0.0.1:15721/v1)
   --upstream-url URL         Antigravity Pool upstream URL (default: http://127.0.0.1:8045/v1)
   --ccswitch-db PATH         CC Switch sqlite database (default: ~/.cc-switch/cc-switch.db)
@@ -93,15 +94,18 @@ SELECT_PROVIDER=1
 RESTART_CCSWITCH=0
 RUN_VERIFY=0
 DRY_RUN=0
+AUTO_ANTIGRAVITY=1
+POOL_MODELS_SET=0
+UPSTREAM_URL_SET=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --provider-name) PROVIDER_NAME="${2:?}"; shift 2 ;;
     --model) MODEL="${2:?}"; shift 2 ;;
-    --pool-models) POOL_MODELS="${2:?}"; shift 2 ;;
+    --pool-models) POOL_MODELS="${2:?}"; POOL_MODELS_SET=1; shift 2 ;;
     --agent-models) AGENT_MODELS="${2:?}"; shift 2 ;;
     --proxy-url) PROXY_URL="${2:?}"; shift 2 ;;
-    --upstream-url) UPSTREAM_URL="${2:?}"; shift 2 ;;
+    --upstream-url) UPSTREAM_URL="${2:?}"; UPSTREAM_URL_SET=1; shift 2 ;;
     --ccswitch-db) CCSWITCH_DB="${2:?}"; shift 2 ;;
     --codex-config) CODEX_CONFIG="${2:?}"; shift 2 ;;
     --settings-json) SETTINGS_JSON="${2:?}"; shift 2 ;;
@@ -111,6 +115,7 @@ while [[ $# -gt 0 ]]; do
     --restart-ccswitch) RESTART_CCSWITCH=1; shift ;;
     --run-verify) RUN_VERIFY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --no-auto-antigravity) AUTO_ANTIGRAVITY=0; shift ;;
     -h|--help) usage; exit 0 ;;
     --version) echo "$VERSION"; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -121,6 +126,80 @@ CCSWITCH_DB="$(expand_path "$CCSWITCH_DB")"
 CODEX_CONFIG="$(expand_path "$CODEX_CONFIG")"
 SETTINGS_JSON="$(expand_path "$SETTINGS_JSON")"
 BACKUP_DIR="$(expand_path "$BACKUP_DIR")"
+
+sync_antigravity_metadata() {
+  [[ "$AUTO_ANTIGRAVITY" -eq 1 ]] || return 0
+  need_cmd python3
+  local result
+  if ! result="$(python3 - "$UPSTREAM_URL" "$POOL_MODELS_SET" "$UPSTREAM_URL_SET" "$POOL_MODELS" <<'PY'
+import json
+import sys
+import urllib.request
+from pathlib import Path
+from urllib.parse import urljoin
+
+fallback_url, pool_models_set, upstream_url_set, configured_pool_models = sys.argv[1:]
+pool_models_set = pool_models_set == "1"
+upstream_url_set = upstream_url_set == "1"
+cfg_path = Path.home() / ".antigravity_tools" / "gui_config.json"
+if not cfg_path.exists():
+    raise SystemExit(2)
+
+cfg = json.loads(cfg_path.read_text())
+proxy = cfg.get("proxy") or {}
+port = int(proxy.get("port") or 8045)
+api_key = proxy.get("api_key") or ""
+upstream_url = fallback_url if upstream_url_set else f"http://127.0.0.1:{port}/v1"
+print(f"UPSTREAM_URL={upstream_url}")
+
+if pool_models_set:
+    raise SystemExit(0)
+
+headers = {}
+if api_key:
+    headers["Authorization"] = f"Bearer {api_key}"
+req = urllib.request.Request(urljoin(upstream_url.rstrip("/") + "/", "models"), headers=headers)
+with urllib.request.urlopen(req, timeout=15) as resp:
+    payload = json.loads(resp.read().decode("utf-8"))
+
+seen = set()
+models = []
+for model_id in configured_pool_models.split(","):
+    model_id = model_id.strip()
+    if not model_id or model_id in seen:
+        continue
+    seen.add(model_id)
+    models.append(model_id)
+for item in payload.get("data", []):
+    model_id = item.get("id")
+    if not model_id or model_id in seen:
+        continue
+    seen.add(model_id)
+    models.append(model_id)
+if not models:
+    raise SystemExit(3)
+print("POOL_MODELS=" + ",".join(models))
+print(f"ANTIGRAVITY_MODEL_COUNT={len(models)}")
+PY
+)"; then
+    echo "antigravity_auto=unavailable; using configured defaults" >&2
+    return 0
+  fi
+
+  local line key value model_count=""
+  while IFS='=' read -r key value; do
+    case "$key" in
+      UPSTREAM_URL) UPSTREAM_URL="$value" ;;
+      POOL_MODELS) POOL_MODELS="$value" ;;
+      ANTIGRAVITY_MODEL_COUNT) model_count="$value" ;;
+    esac
+  done <<<"$result"
+  if [[ -n "$model_count" ]]; then
+    echo "antigravity_auto=models:$model_count"
+  else
+    echo "antigravity_auto=config"
+  fi
+}
 
 doctor() {
   need_cmd python3
@@ -176,6 +255,12 @@ PY
 install() {
   need_cmd python3
   [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
+  sync_antigravity_metadata
+
+  if [[ "$RESTART_CCSWITCH" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
+    pkill -f '/Applications/CC Switch.app/Contents/MacOS/cc-switch' >/dev/null 2>&1 || true
+    sleep 1
+  fi
 
   if [[ "$DRY_RUN" -eq 0 ]]; then
     mkdir -p "$BACKUP_DIR"
@@ -222,6 +307,17 @@ def normalize_pool_models(raw: str, default_model: str) -> list[str]:
     return models
 
 pool_models = normalize_pool_models(pool_models_csv, model)
+
+def read_antigravity_api_key() -> str:
+    cfg_path = Path.home() / ".antigravity_tools" / "gui_config.json"
+    if not cfg_path.exists():
+        return ""
+    try:
+        cfg = json.loads(cfg_path.read_text())
+    except Exception:
+        return ""
+    token = ((cfg.get("proxy") or {}).get("api_key") or "").strip()
+    return token if token.startswith("sk-") else ""
 
 TOP_LEVEL_KEYS = {
     "model_provider",
@@ -295,6 +391,10 @@ if not provider:
 
 provider_payload = json.loads(provider["settings_config"])
 provider_payload["config"] = transform_config(provider_payload.get("config", ""), upstream_url)
+antigravity_api_key = read_antigravity_api_key()
+if antigravity_api_key:
+    auth = provider_payload.setdefault("auth", {})
+    auth["OPENAI_API_KEY"] = antigravity_api_key
 provider_payload["modelCatalog"] = {
     "models": [
         {
@@ -312,6 +412,10 @@ updates.append(("provider.settings_config", provider_payload["config"]))
 common = conn.execute("select value from settings where key='common_config_codex'").fetchone()
 common_value = transform_config(common["value"] if common else "", proxy_url)
 updates.append(("settings.common_config_codex", common_value))
+
+proxy_parts = proxy_url.removeprefix("http://").removeprefix("https://").split("/", 1)[0].rsplit(":", 1)
+proxy_host = proxy_parts[0]
+proxy_port = int(proxy_parts[1]) if len(proxy_parts) == 2 and proxy_parts[1].isdigit() else 15721
 
 backup = conn.execute("select original_config from proxy_live_backup where app_type='codex'").fetchone()
 backup_payload = None
@@ -332,6 +436,9 @@ if dry_run:
         for line in value.splitlines():
             if line.strip().startswith(("model_provider", "model =", "review_model", "base_url", "wire_api", "[model_providers.custom]")):
                 print(line)
+    print(f"provider_auth_update={bool(antigravity_api_key)}")
+    print(f"provider_model_catalog_count={len(pool_models)}")
+    print(f"proxy_config_update={proxy_host}:{proxy_port}")
     raise SystemExit(0)
 
 conn.execute(
@@ -347,6 +454,20 @@ if common:
     conn.execute("update settings set value=? where key='common_config_codex'", (common_value,))
 else:
     conn.execute("insert into settings(key, value) values('common_config_codex', ?)", (common_value,))
+
+conn.execute(
+    """
+    insert into proxy_config(app_type, proxy_enabled, enabled, listen_address, listen_port, updated_at)
+    values('codex', 1, 1, ?, ?, datetime('now'))
+    on conflict(app_type) do update set
+      proxy_enabled=1,
+      enabled=1,
+      listen_address=excluded.listen_address,
+      listen_port=excluded.listen_port,
+      updated_at=datetime('now')
+    """,
+    (proxy_host, proxy_port),
+)
 
 if backup_payload is not None:
     conn.execute(
@@ -368,14 +489,15 @@ if select_provider and settings_path.exists():
 
 print(f"provider={provider_name}")
 print(f"model={model}")
-print(f"pool_models={','.join(pool_models)}")
+print(f"pool_models_count={len(pool_models)}")
 print(f"codex_live_proxy={proxy_url}")
 print(f"ccswitch_upstream={upstream_url}")
+print(f"provider_auth_update={bool(antigravity_api_key)}")
+print(f"proxy_config_update={proxy_host}:{proxy_port}")
 print("install=ok")
 PY
 
   if [[ "$RESTART_CCSWITCH" -eq 1 && "$DRY_RUN" -eq 0 ]]; then
-    pkill -f '/Applications/CC Switch.app/Contents/MacOS/cc-switch' >/dev/null 2>&1 || true
     open -a 'CC Switch'
     sleep 2
   fi
@@ -414,6 +536,7 @@ print(token)
 install_openclaw() {
   need_cmd python3
   [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
+  sync_antigravity_metadata
   local openclaw_config="$HOME/.openclaw/openclaw.json"
   local openclaw_state="$HOME/.openclaw/agents/main/agent/openclaw-agent.sqlite"
   local openclaw_sessions="$HOME/.openclaw/agents/main/sessions/sessions.json"
@@ -465,12 +588,24 @@ row = conn.execute(
 conn.close()
 if not row:
     raise SystemExit(f"provider not found in CC Switch DB: {provider_name}")
+
+def read_antigravity_api_key() -> str:
+    cfg_path = Path.home() / ".antigravity_tools" / "gui_config.json"
+    if not cfg_path.exists():
+        return ""
+    try:
+        cfg = json.loads(cfg_path.read_text())
+    except Exception:
+        return ""
+    token = ((cfg.get("proxy") or {}).get("api_key") or "").strip()
+    return token if token.startswith("sk-") else ""
+
 def extract_provider_token(payload: dict) -> str:
     auth = payload.get("auth") or {}
     token = auth.get("OPENAI_API_KEY")
     return token if isinstance(token, str) and token.startswith("sk-") else ""
 
-token = extract_provider_token(json.loads(row[0]))
+token = read_antigravity_api_key() or extract_provider_token(json.loads(row[0]))
 
 cfg_path = Path(config_path)
 data = json.loads(cfg_path.read_text())
@@ -542,7 +677,7 @@ if sessions_file.exists():
 if dry_run:
     print("dry_run=true")
     print(f"openclaw_model={primary}")
-    print(f"openclaw_pool_models={','.join(pool_models)}")
+    print(f"openclaw_pool_models_count={len(pool_models)}")
     print(f"openclaw_agent_models={','.join(agent_models)}")
     print(f"openclaw_baseUrl={upstream_url}")
     print(f"openclaw_auth_update={bool(token)}")
@@ -565,7 +700,7 @@ if token:
     conn.commit()
     conn.close()
 print(f"openclaw_model={primary}")
-print(f"openclaw_pool_models={','.join(pool_models)}")
+print(f"openclaw_pool_models_count={len(pool_models)}")
 print(f"openclaw_agent_models={','.join(agent_models)}")
 print(f"openclaw_baseUrl={upstream_url}")
 print(f"openclaw_auth_update={bool(token)}")
@@ -577,6 +712,7 @@ PY
 install_hermes() {
   need_cmd python3
   [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
+  sync_antigravity_metadata
   local hermes_config="$HOME/.hermes/config.yaml"
   [[ -f "$hermes_config" ]] || die "Hermes config not found: $hermes_config"
 
@@ -623,12 +759,24 @@ row = conn.execute(
 conn.close()
 if not row:
     raise SystemExit(f"provider not found in CC Switch DB: {provider_name}")
+
+def read_antigravity_api_key() -> str:
+    cfg_path = Path.home() / ".antigravity_tools" / "gui_config.json"
+    if not cfg_path.exists():
+        return ""
+    try:
+        cfg = json.loads(cfg_path.read_text())
+    except Exception:
+        return ""
+    token = ((cfg.get("proxy") or {}).get("api_key") or "").strip()
+    return token if token.startswith("sk-") else ""
+
 def extract_provider_token(payload: dict) -> str:
     auth = payload.get("auth") or {}
     token = auth.get("OPENAI_API_KEY")
     return token if isinstance(token, str) and token.startswith("sk-") else ""
 
-token = extract_provider_token(json.loads(row[0]))
+token = read_antigravity_api_key() or extract_provider_token(json.loads(row[0]))
 
 cfg_path = Path(config_path)
 data = yaml.safe_load(cfg_path.read_text()) or {}
@@ -673,7 +821,7 @@ if dry_run:
     print("dry_run=true")
     print(f"hermes_provider=custom")
     print(f"hermes_model={model}")
-    print(f"hermes_pool_models={','.join(pool_models)}")
+    print(f"hermes_pool_models_count={len(pool_models)}")
     print(f"hermes_base_url={upstream_url}")
     print("hermes_max_tokens=4096")
     raise SystemExit(0)
@@ -681,7 +829,7 @@ if dry_run:
 cfg_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
 print("hermes_provider=custom")
 print(f"hermes_model={model}")
-print(f"hermes_pool_models={','.join(pool_models)}")
+print(f"hermes_pool_models_count={len(pool_models)}")
 print(f"hermes_base_url={upstream_url}")
 print("hermes_max_tokens=4096")
 print("install_hermes=ok")
