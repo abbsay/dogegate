@@ -78,13 +78,13 @@ flowchart LR
   Hermes["Hermes Agent\n~/.hermes/config.yaml"]
   AGT["Antigravity Tools\n127.0.0.1:8045/v1"]
   Claude["claude-sonnet-4-6"]
-  Gemini["gemini-3.1-pro-high"]
+  Gemini["gemini-3.1-pro-high\nexperimental / not stable"]
 
   OpenClaw --> OpenClawAuth
   OpenClawAuth --> AGT
   Hermes --> AGT
   AGT --> Claude
-  AGT --> Gemini
+  AGT -. simple direct calls only .-> Gemini
 ```
 
 ## Roles
@@ -100,6 +100,13 @@ flowchart LR
 | Codex Desktop | Codex desktop app. | Automated in v0.1.0 |
 | OpenClaw | Local multi-agent client using an OpenAI Responses provider profile. | Automated in v0.2.0 |
 | Hermes Agent | Local coding agent with a custom OpenAI-compatible provider. | Automated in v0.2.0 |
+
+## Model Compatibility
+
+| Model | Codex | OpenClaw | Hermes | Notes |
+| --- | --- | --- | --- | --- |
+| `claude-sonnet-4-6` | Works through custom provider. | Stable for model runs and local agent turns. | Stable for oneshot, chat, and terminal tool use with `model.max_tokens: 4096`. | Recommended default. |
+| `gemini-3.1-pro-high` | Direct simple calls can work, but agent-shaped requests are fragile. | Not installed as stable. Agent requests fail with Gemini `safety_settings` schema errors. | Not installed as stable. Tool/agent requests fail with Gemini `safety_settings` schema errors. | Experimental only. |
 
 ## Why Codex Needs Special Handling
 
@@ -160,6 +167,6 @@ Dogegate patches these local files and records backups before changing them:
 | Version | Goal |
 | --- | --- |
 | `0.1.x` | Stable Codex CLI/Desktop routing through CC-Switch and Antigravity Tools. |
-| `0.2.x` | Add OpenClaw and Hermes Agent support. |
+| `0.2.x` | Add OpenClaw and Hermes Agent support with Claude as the stable model. |
 | `0.3.x` | Add Antigravity Tools LS failover and health checks. |
 | `1.0.0` | Compatibility matrix, rollback command, and tested multi-client profiles. |

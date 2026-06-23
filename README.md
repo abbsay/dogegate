@@ -28,10 +28,22 @@ Experimental but usable. The local setup has been verified with:
 - Antigravity Pool upstream on `127.0.0.1:8045`
 - OpenAI Responses-compatible `/v1/responses`
 
-Current v0.2.0 automation covers Codex CLI, Codex Desktop, OpenClaw, and Hermes
+Current v0.2.x automation covers Codex CLI, Codex Desktop, OpenClaw, and Hermes
 Agent. The broader Dogegate stack is intended to cover Claude Code, Claude
 Cowork, Codex CLI, Codex Desktop, OpenClaw, and Hermes through CC Switch and
 Antigravity Tools, with Antigravity Tools LS as a standby upstream.
+
+Stable agent model:
+
+```text
+claude-sonnet-4-6
+```
+
+Known limitation: `gemini-3.1-pro-high` can answer simple direct
+`/v1/chat/completions` requests through the pool, but agent/tool requests from
+OpenClaw and Hermes currently fail against the upstream Gemini safety-settings
+schema. Dogegate therefore does not install Gemini as a stable OpenClaw/Hermes
+agent model.
 
 ## Install
 
@@ -152,8 +164,10 @@ For OpenClaw and Hermes:
 ./bin/codex-ccswitch-antigravity verify-agents
 ```
 
-Expected outputs include two `pong` responses, one from OpenClaw and one from
-Hermes.
+Expected outputs include two `pong` responses:
+
+- one from an OpenClaw `agent --local` turn
+- one from a Hermes `chat -q` turn with the `hermes-cli` toolset enabled
 
 ## Rollback
 

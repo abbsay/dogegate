@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.0"
+VERSION="0.2.1"
 
 usage() {
   cat <<'USAGE'
@@ -434,23 +434,6 @@ models = [
             "thinkingFormat": "openai",
         },
     },
-    {
-        "id": "gemini-3.1-pro-high",
-        "name": "gemini-3.1-pro-high",
-        "api": "openai-responses",
-        "baseUrl": upstream_url,
-        "reasoning": True,
-        "input": ["text", "image"],
-        "contextWindow": 1000000,
-        "contextTokens": 900000,
-        "params": {"store": False, "responsesCompactThreshold": 900000},
-        "compat": {
-            "supportsStore": False,
-            "supportsReasoningEffort": True,
-            "supportedReasoningEfforts": ["minimal", "low", "medium", "high", "xhigh"],
-            "thinkingFormat": "openai",
-        },
-    },
 ]
 provider = data.setdefault("models", {}).setdefault("providers", {}).setdefault("openai", {})
 provider.update({
@@ -551,7 +534,6 @@ customs.append({
     "api_mode": "chat_completions",
     "models": {
         model: {"context_length": 1000000, "max_completion_tokens": 4096},
-        "gemini-3.1-pro-high": {"context_length": 1000000, "max_completion_tokens": 4096},
     },
 })
 data["custom_providers"] = customs
@@ -574,8 +556,20 @@ PY
 }
 
 verify_agents() {
-  "$HOME/.openclaw/bin/openclaw" infer model run --model "openai/$MODEL" --prompt "Reply with exactly: pong"
-  "$HOME/.local/bin/hermes" -z "Reply with exactly: pong" --ignore-rules
+  local stamp
+  stamp="$(date +%Y%m%d%H%M%S)"
+  "$HOME/.openclaw/bin/openclaw" agent \
+    --local \
+    --agent main \
+    --session-key "agent:main:dogegate-verify-$stamp" \
+    --model "openai/$MODEL" \
+    --message "Reply with exactly: pong" \
+    --timeout 180
+  "$HOME/.local/bin/hermes" chat \
+    -q "Use terminal to run: printf pong. Then answer with exactly the command output." \
+    --ignore-rules \
+    --toolsets hermes-cli \
+    --quiet
 }
 
 case "$COMMAND" in

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 - 2026-06-23
+
+- Stop installing `gemini-3.1-pro-high` as a stable OpenClaw/Hermes agent model.
+- Document Gemini safety-settings schema failures for agent/tool-shaped requests.
+- Keep `claude-sonnet-4-6` as the stable OpenClaw/Hermes pool model.
+- Clarify that simple smoke tests are not full agent adaptation tests.
+
 ## 0.2.0 - 2026-06-23
 
 - Add `install-openclaw` to route OpenClaw through Antigravity Pool.
