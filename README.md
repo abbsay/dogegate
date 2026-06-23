@@ -130,6 +130,19 @@ Override it with `--pool-models model-a,model-b`. `claude-sonnet-4-6`,
 Gemini Pro/GPT-OSS routes may answer simple API calls but still reject
 agent-shaped requests with upstream schema errors.
 
+OpenClaw uses a narrower default agent allowlist:
+
+```text
+claude-sonnet-4-6
+gemini-3-flash-agent
+gemini-3-flash
+gemini-3.5-flash-low
+claude-3-5-sonnet-20241022
+```
+
+Override it with `--agent-models model-a,model-b`. Dogegate clears stale
+OpenClaw session overrides when they point outside this agent-safe list.
+
 The two URLs intentionally differ:
 
 ```text

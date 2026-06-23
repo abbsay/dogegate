@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.5 - 2026-06-23
+
+- Add `--agent-models` for the OpenClaw agent-safe model allowlist.
+- Keep full pool catalog exposure separate from OpenClaw session model safety.
+- Clear stale OpenClaw session overrides that point to pool models known to fail
+  agent-shaped requests.
+- Avoid writing CC Switch OAuth access tokens into OpenClaw/Hermes API-key
+  slots; preserve existing tool auth when CC Switch has no `OPENAI_API_KEY`.
+
 ## 0.2.4 - 2026-06-23
 
 - Add `--pool-models` and a default Antigravity Pool model list.

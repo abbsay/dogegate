@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.4"
+VERSION="0.2.5"
 
 usage() {
   cat <<'USAGE'
@@ -22,6 +22,7 @@ Options:
   --provider-name NAME       CC Switch Codex provider name (default: Antigravity-Pool)
   --model MODEL              Codex model name (default: claude-sonnet-4-6)
   --pool-models CSV          Pool model ids exposed to agents and pickers
+  --agent-models CSV         Pool model ids allowed for OpenClaw agent sessions
   --proxy-url URL            CC Switch local proxy URL (default: http://127.0.0.1:15721/v1)
   --upstream-url URL         Antigravity Pool upstream URL (default: http://127.0.0.1:8045/v1)
   --ccswitch-db PATH         CC Switch sqlite database (default: ~/.cc-switch/cc-switch.db)
@@ -76,6 +77,7 @@ shift || true
 PROVIDER_NAME="Antigravity-Pool"
 MODEL="claude-sonnet-4-6"
 POOL_MODELS="claude-sonnet-4-6,gemini-3.1-pro-high,gemini-3.1-pro-low,gemini-3-flash-agent,gemini-3-flash,gemini-3.5-flash-low,gemini-3.1-flash-image,gpt-oss-120b-medium,claude-3-5-sonnet-20241022"
+AGENT_MODELS="claude-sonnet-4-6,gemini-3-flash-agent,gemini-3-flash,gemini-3.5-flash-low,claude-3-5-sonnet-20241022"
 PROXY_URL="http://127.0.0.1:15721/v1"
 UPSTREAM_URL="http://127.0.0.1:8045/v1"
 CCSWITCH_DB="~/.cc-switch/cc-switch.db"
@@ -93,6 +95,7 @@ while [[ $# -gt 0 ]]; do
     --provider-name) PROVIDER_NAME="${2:?}"; shift 2 ;;
     --model) MODEL="${2:?}"; shift 2 ;;
     --pool-models) POOL_MODELS="${2:?}"; shift 2 ;;
+    --agent-models) AGENT_MODELS="${2:?}"; shift 2 ;;
     --proxy-url) PROXY_URL="${2:?}"; shift 2 ;;
     --upstream-url) UPSTREAM_URL="${2:?}"; shift 2 ;;
     --ccswitch-db) CCSWITCH_DB="${2:?}"; shift 2 ;;
@@ -423,14 +426,14 @@ install_openclaw() {
     echo "backup_dir=$HOME/.openclaw/backups/dogegate"
   fi
 
-  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$POOL_MODELS" "$UPSTREAM_URL" "$DRY_RUN" "$openclaw_config" "$openclaw_state" "$openclaw_sessions" <<'PY'
+  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$POOL_MODELS" "$AGENT_MODELS" "$UPSTREAM_URL" "$DRY_RUN" "$openclaw_config" "$openclaw_state" "$openclaw_sessions" <<'PY'
 import json
 import sqlite3
 import sys
 import time
 from pathlib import Path
 
-db_path, provider_name, model, pool_models_csv, upstream_url, dry_run, config_path, state_path, sessions_path = sys.argv[1:]
+db_path, provider_name, model, pool_models_csv, agent_models_csv, upstream_url, dry_run, config_path, state_path, sessions_path = sys.argv[1:]
 dry_run = dry_run == "1"
 
 def normalize_pool_models(raw: str, default_model: str) -> list[str]:
@@ -445,6 +448,11 @@ def normalize_pool_models(raw: str, default_model: str) -> list[str]:
     return models
 
 pool_models = normalize_pool_models(pool_models_csv, model)
+agent_models = normalize_pool_models(agent_models_csv, model)
+pool_model_set = set(pool_models)
+missing_agent_models = [model_id for model_id in agent_models if model_id not in pool_model_set]
+if missing_agent_models:
+    raise SystemExit("agent models must be included in pool models: " + ",".join(missing_agent_models))
 conn = sqlite3.connect(db_path)
 row = conn.execute(
     "select settings_config from providers where app_type='codex' and name=?",
@@ -453,9 +461,12 @@ row = conn.execute(
 conn.close()
 if not row:
     raise SystemExit(f"provider not found in CC Switch DB: {provider_name}")
-token = (json.loads(row[0]).get("auth") or {}).get("OPENAI_API_KEY") or ""
-if not token:
-    raise SystemExit(f"provider has no OPENAI_API_KEY token: {provider_name}")
+def extract_provider_token(payload: dict) -> str:
+    auth = payload.get("auth") or {}
+    token = auth.get("OPENAI_API_KEY")
+    return token if isinstance(token, str) and token.startswith("sk-") else ""
+
+token = extract_provider_token(json.loads(row[0]))
 
 cfg_path = Path(config_path)
 data = json.loads(cfg_path.read_text())
@@ -489,7 +500,7 @@ provider.update({
     "models": models,
 })
 primary = f"openai/{model}"
-allowed_models = {f"openai/{model_id}": {} for model_id in pool_models}
+allowed_models = {f"openai/{model_id}": {} for model_id in agent_models}
 agent_defaults = data.setdefault("agents", {}).setdefault("defaults", {})
 agent_defaults.setdefault("model", {})["primary"] = primary
 agent_defaults["models"] = allowed_models
@@ -528,7 +539,9 @@ if dry_run:
     print("dry_run=true")
     print(f"openclaw_model={primary}")
     print(f"openclaw_pool_models={','.join(pool_models)}")
+    print(f"openclaw_agent_models={','.join(agent_models)}")
     print(f"openclaw_baseUrl={upstream_url}")
+    print(f"openclaw_auth_update={bool(token)}")
     print(f"openclaw_session_overrides_to_clear={cleared_sessions}")
     raise SystemExit(0)
 
@@ -536,19 +549,22 @@ cfg_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 if sessions is not None and cleared_sessions:
     sessions_file.write_text(json.dumps(sessions, indent=2, ensure_ascii=False) + "\n")
 
-conn = sqlite3.connect(state_path)
-now = int(time.time() * 1000)
-store = {"version": 1, "profiles": {"openai:manual": {"type": "api_key", "provider": "openai", "key": token}}}
-state = {"version": 1, "lastGood": {"openai": "openai:manual"}, "usageStats": {}}
-conn.execute("delete from auth_profile_store where store_key='primary'")
-conn.execute("insert into auth_profile_store(store_key, store_json, updated_at) values('primary', ?, ?)", (json.dumps(store, ensure_ascii=False), now))
-conn.execute("delete from auth_profile_state where state_key='primary'")
-conn.execute("insert into auth_profile_state(state_key, state_json, updated_at) values('primary', ?, ?)", (json.dumps(state, ensure_ascii=False), now))
-conn.commit()
-conn.close()
+if token:
+    conn = sqlite3.connect(state_path)
+    now = int(time.time() * 1000)
+    store = {"version": 1, "profiles": {"openai:manual": {"type": "api_key", "provider": "openai", "key": token}}}
+    state = {"version": 1, "lastGood": {"openai": "openai:manual"}, "usageStats": {}}
+    conn.execute("delete from auth_profile_store where store_key='primary'")
+    conn.execute("insert into auth_profile_store(store_key, store_json, updated_at) values('primary', ?, ?)", (json.dumps(store, ensure_ascii=False), now))
+    conn.execute("delete from auth_profile_state where state_key='primary'")
+    conn.execute("insert into auth_profile_state(state_key, state_json, updated_at) values('primary', ?, ?)", (json.dumps(state, ensure_ascii=False), now))
+    conn.commit()
+    conn.close()
 print(f"openclaw_model={primary}")
 print(f"openclaw_pool_models={','.join(pool_models)}")
+print(f"openclaw_agent_models={','.join(agent_models)}")
 print(f"openclaw_baseUrl={upstream_url}")
+print(f"openclaw_auth_update={bool(token)}")
 print(f"openclaw_session_overrides_cleared={cleared_sessions}")
 print("install_openclaw=ok")
 PY
@@ -603,12 +619,29 @@ row = conn.execute(
 conn.close()
 if not row:
     raise SystemExit(f"provider not found in CC Switch DB: {provider_name}")
-token = (json.loads(row[0]).get("auth") or {}).get("OPENAI_API_KEY") or ""
-if not token:
-    raise SystemExit(f"provider has no OPENAI_API_KEY token: {provider_name}")
+def extract_provider_token(payload: dict) -> str:
+    auth = payload.get("auth") or {}
+    token = auth.get("OPENAI_API_KEY")
+    return token if isinstance(token, str) and token.startswith("sk-") else ""
+
+token = extract_provider_token(json.loads(row[0]))
 
 cfg_path = Path(config_path)
 data = yaml.safe_load(cfg_path.read_text()) or {}
+if not token:
+    token = (
+        (data.get("model") or {}).get("api_key")
+        or next(
+            (
+                provider.get("api_key")
+                for provider in (data.get("custom_providers") or [])
+                if provider.get("name") == "antigravity-pool" and provider.get("api_key")
+            ),
+            "",
+        )
+    )
+if not token:
+    raise SystemExit(f"provider has no OPENAI_API_KEY token and Hermes has no existing antigravity-pool api_key: {provider_name}")
 model_cfg = data.setdefault("model", {})
 model_cfg.update({
     "default": model,
