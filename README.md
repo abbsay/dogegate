@@ -100,7 +100,7 @@ The installer backs up files first, then patches:
 - `~/.openclaw/openclaw.json`
   - points OpenClaw's OpenAI provider at Antigravity Pool
   - sets the default model to `openai/claude-sonnet-4-6`
-  - adds an OpenClaw model allowlist for the configured pool model
+  - adds an OpenClaw model allowlist for the configured pool model list
 - `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`
   - stores the Antigravity Pool API key in OpenClaw's local auth profile
 - `~/.openclaw/agents/main/sessions/sessions.json`
@@ -109,6 +109,26 @@ The installer backs up files first, then patches:
   - sets Hermes to `provider: custom`
   - points `model.base_url` at Antigravity Pool
   - sets `model.max_tokens: 4096` for pool compatibility
+
+Default pool model list:
+
+```text
+claude-sonnet-4-6
+gemini-3.1-pro-high
+gemini-3.1-pro-low
+gemini-3-flash-agent
+gemini-3-flash
+gemini-3.5-flash-low
+gemini-3.1-flash-image
+gpt-oss-120b-medium
+claude-3-5-sonnet-20241022
+```
+
+Override it with `--pool-models model-a,model-b`. `claude-sonnet-4-6`,
+`gemini-3-flash-agent`, `gemini-3-flash`, `gemini-3.5-flash-low`, and
+`claude-3-5-sonnet-20241022` have passed OpenClaw agent smoke tests. Some
+Gemini Pro/GPT-OSS routes may answer simple API calls but still reject
+agent-shaped requests with upstream schema errors.
 
 The two URLs intentionally differ:
 

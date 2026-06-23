@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.4 - 2026-06-23
+
+- Add `--pool-models` and a default Antigravity Pool model list.
+- Configure OpenClaw and Hermes with multiple pool models while keeping
+  `claude-sonnet-4-6` as the default.
+- Populate CC Switch provider model catalog from the same pool model list.
+- Preserve session overrides when they point to an allowed pool model.
+
 ## 0.2.3 - 2026-06-23
 
 - Add OpenClaw `agents.defaults.models` allowlist for the configured pool model.

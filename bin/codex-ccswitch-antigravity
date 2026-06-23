@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.3"
+VERSION="0.2.4"
 
 usage() {
   cat <<'USAGE'
@@ -21,6 +21,7 @@ Usage:
 Options:
   --provider-name NAME       CC Switch Codex provider name (default: Antigravity-Pool)
   --model MODEL              Codex model name (default: claude-sonnet-4-6)
+  --pool-models CSV          Pool model ids exposed to agents and pickers
   --proxy-url URL            CC Switch local proxy URL (default: http://127.0.0.1:15721/v1)
   --upstream-url URL         Antigravity Pool upstream URL (default: http://127.0.0.1:8045/v1)
   --ccswitch-db PATH         CC Switch sqlite database (default: ~/.cc-switch/cc-switch.db)
@@ -74,6 +75,7 @@ shift || true
 
 PROVIDER_NAME="Antigravity-Pool"
 MODEL="claude-sonnet-4-6"
+POOL_MODELS="claude-sonnet-4-6,gemini-3.1-pro-high,gemini-3.1-pro-low,gemini-3-flash-agent,gemini-3-flash,gemini-3.5-flash-low,gemini-3.1-flash-image,gpt-oss-120b-medium,claude-3-5-sonnet-20241022"
 PROXY_URL="http://127.0.0.1:15721/v1"
 UPSTREAM_URL="http://127.0.0.1:8045/v1"
 CCSWITCH_DB="~/.cc-switch/cc-switch.db"
@@ -90,6 +92,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --provider-name) PROVIDER_NAME="${2:?}"; shift 2 ;;
     --model) MODEL="${2:?}"; shift 2 ;;
+    --pool-models) POOL_MODELS="${2:?}"; shift 2 ;;
     --proxy-url) PROXY_URL="${2:?}"; shift 2 ;;
     --upstream-url) UPSTREAM_URL="${2:?}"; shift 2 ;;
     --ccswitch-db) CCSWITCH_DB="${2:?}"; shift 2 ;;
@@ -177,7 +180,7 @@ install() {
     echo "backup_dir=$BACKUP_DIR"
   fi
 
-  python3 - "$CCSWITCH_DB" "$CODEX_CONFIG" "$SETTINGS_JSON" "$PROVIDER_NAME" "$MODEL" "$PROXY_URL" "$UPSTREAM_URL" "$PATCH_LIVE_CONFIG" "$SELECT_PROVIDER" "$DRY_RUN" <<'PY'
+  python3 - "$CCSWITCH_DB" "$CODEX_CONFIG" "$SETTINGS_JSON" "$PROVIDER_NAME" "$MODEL" "$POOL_MODELS" "$PROXY_URL" "$UPSTREAM_URL" "$PATCH_LIVE_CONFIG" "$SELECT_PROVIDER" "$DRY_RUN" <<'PY'
 import json
 import sqlite3
 import sys
@@ -189,6 +192,7 @@ from pathlib import Path
     settings_json,
     provider_name,
     model,
+    pool_models_csv,
     proxy_url,
     upstream_url,
     patch_live_config,
@@ -198,6 +202,19 @@ from pathlib import Path
 patch_live_config = patch_live_config == "1"
 select_provider = select_provider == "1"
 dry_run = dry_run == "1"
+
+def normalize_pool_models(raw: str, default_model: str) -> list[str]:
+    seen = set()
+    models = []
+    for item in [default_model, *raw.split(",")]:
+        model_id = item.strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append(model_id)
+    return models
+
+pool_models = normalize_pool_models(pool_models_csv, model)
 
 TOP_LEVEL_KEYS = {
     "model_provider",
@@ -271,6 +288,16 @@ if not provider:
 
 provider_payload = json.loads(provider["settings_config"])
 provider_payload["config"] = transform_config(provider_payload.get("config", ""), upstream_url)
+provider_payload["modelCatalog"] = {
+    "models": [
+        {
+            "model": model_id,
+            "displayName": model_id,
+            "contextWindow": 1000000,
+        }
+        for model_id in pool_models
+    ]
+}
 
 updates = []
 updates.append(("provider.settings_config", provider_payload["config"]))
@@ -334,6 +361,7 @@ if select_provider and settings_path.exists():
 
 print(f"provider={provider_name}")
 print(f"model={model}")
+print(f"pool_models={','.join(pool_models)}")
 print(f"codex_live_proxy={proxy_url}")
 print(f"ccswitch_upstream={upstream_url}")
 print("install=ok")
@@ -395,15 +423,28 @@ install_openclaw() {
     echo "backup_dir=$HOME/.openclaw/backups/dogegate"
   fi
 
-  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$UPSTREAM_URL" "$DRY_RUN" "$openclaw_config" "$openclaw_state" "$openclaw_sessions" <<'PY'
+  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$POOL_MODELS" "$UPSTREAM_URL" "$DRY_RUN" "$openclaw_config" "$openclaw_state" "$openclaw_sessions" <<'PY'
 import json
 import sqlite3
 import sys
 import time
 from pathlib import Path
 
-db_path, provider_name, model, upstream_url, dry_run, config_path, state_path, sessions_path = sys.argv[1:]
+db_path, provider_name, model, pool_models_csv, upstream_url, dry_run, config_path, state_path, sessions_path = sys.argv[1:]
 dry_run = dry_run == "1"
+
+def normalize_pool_models(raw: str, default_model: str) -> list[str]:
+    seen = set()
+    models = []
+    for item in [default_model, *raw.split(",")]:
+        model_id = item.strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append(model_id)
+    return models
+
+pool_models = normalize_pool_models(pool_models_csv, model)
 conn = sqlite3.connect(db_path)
 row = conn.execute(
     "select settings_config from providers where app_type='codex' and name=?",
@@ -420,8 +461,8 @@ cfg_path = Path(config_path)
 data = json.loads(cfg_path.read_text())
 models = [
     {
-        "id": model,
-        "name": model,
+        "id": model_id,
+        "name": model_id,
         "api": "openai-responses",
         "baseUrl": upstream_url,
         "reasoning": True,
@@ -435,7 +476,8 @@ models = [
             "supportedReasoningEfforts": ["minimal", "low", "medium", "high", "xhigh"],
             "thinkingFormat": "openai",
         },
-    },
+    }
+    for model_id in pool_models
 ]
 provider = data.setdefault("models", {}).setdefault("providers", {}).setdefault("openai", {})
 provider.update({
@@ -447,13 +489,14 @@ provider.update({
     "models": models,
 })
 primary = f"openai/{model}"
+allowed_models = {f"openai/{model_id}": {} for model_id in pool_models}
 agent_defaults = data.setdefault("agents", {}).setdefault("defaults", {})
 agent_defaults.setdefault("model", {})["primary"] = primary
-agent_defaults["models"] = {primary: {}}
+agent_defaults["models"] = allowed_models
 for agent in data.get("agents", {}).get("list", []):
     if "model" in agent:
         agent["model"] = primary
-    agent["models"] = {primary: {}}
+    agent["models"] = allowed_models
 
 sessions_file = Path(sessions_path)
 sessions = None
@@ -476,7 +519,7 @@ if sessions_file.exists():
         if not provider_override and not model_override:
             continue
         selected = f"{provider_override or 'openai'}/{model_override or model}"
-        if selected != primary:
+        if selected not in allowed_models:
             for key in override_keys:
                 session.pop(key, None)
             cleared_sessions += 1
@@ -484,6 +527,7 @@ if sessions_file.exists():
 if dry_run:
     print("dry_run=true")
     print(f"openclaw_model={primary}")
+    print(f"openclaw_pool_models={','.join(pool_models)}")
     print(f"openclaw_baseUrl={upstream_url}")
     print(f"openclaw_session_overrides_to_clear={cleared_sessions}")
     raise SystemExit(0)
@@ -503,6 +547,7 @@ conn.execute("insert into auth_profile_state(state_key, state_json, updated_at) 
 conn.commit()
 conn.close()
 print(f"openclaw_model={primary}")
+print(f"openclaw_pool_models={','.join(pool_models)}")
 print(f"openclaw_baseUrl={upstream_url}")
 print(f"openclaw_session_overrides_cleared={cleared_sessions}")
 print("install_openclaw=ok")
@@ -524,7 +569,7 @@ install_hermes() {
     echo "backup_dir=$HOME/.hermes/backups/dogegate"
   fi
 
-  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$UPSTREAM_URL" "$DRY_RUN" "$hermes_config" <<'PY'
+  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$POOL_MODELS" "$UPSTREAM_URL" "$DRY_RUN" "$hermes_config" <<'PY'
 import json
 import sqlite3
 import sys
@@ -535,8 +580,21 @@ try:
 except Exception as exc:
     raise SystemExit("PyYAML is required for Hermes config editing") from exc
 
-db_path, provider_name, model, upstream_url, dry_run, config_path = sys.argv[1:]
+db_path, provider_name, model, pool_models_csv, upstream_url, dry_run, config_path = sys.argv[1:]
 dry_run = dry_run == "1"
+
+def normalize_pool_models(raw: str, default_model: str) -> list[str]:
+    seen = set()
+    models = []
+    for item in [default_model, *raw.split(",")]:
+        model_id = item.strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append(model_id)
+    return models
+
+pool_models = normalize_pool_models(pool_models_csv, model)
 conn = sqlite3.connect(db_path)
 row = conn.execute(
     "select settings_config from providers where app_type='codex' and name=?",
@@ -568,7 +626,8 @@ customs.append({
     "api_key": token,
     "api_mode": "chat_completions",
     "models": {
-        model: {"context_length": 1000000, "max_completion_tokens": 4096},
+        model_id: {"context_length": 1000000, "max_completion_tokens": 4096}
+        for model_id in pool_models
     },
 })
 data["custom_providers"] = customs
@@ -577,6 +636,7 @@ if dry_run:
     print("dry_run=true")
     print(f"hermes_provider=custom")
     print(f"hermes_model={model}")
+    print(f"hermes_pool_models={','.join(pool_models)}")
     print(f"hermes_base_url={upstream_url}")
     print("hermes_max_tokens=4096")
     raise SystemExit(0)
@@ -584,6 +644,7 @@ if dry_run:
 cfg_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
 print("hermes_provider=custom")
 print(f"hermes_model={model}")
+print(f"hermes_pool_models={','.join(pool_models)}")
 print(f"hermes_base_url={upstream_url}")
 print("hermes_max_tokens=4096")
 print("install_hermes=ok")
