@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.1"
+VERSION="0.2.2"
 
 usage() {
   cat <<'USAGE'
@@ -381,6 +381,7 @@ install_openclaw() {
   [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
   local openclaw_config="$HOME/.openclaw/openclaw.json"
   local openclaw_state="$HOME/.openclaw/agents/main/agent/openclaw-agent.sqlite"
+  local openclaw_sessions="$HOME/.openclaw/agents/main/sessions/sessions.json"
   [[ -f "$openclaw_config" ]] || die "OpenClaw config not found: $openclaw_config"
   [[ -f "$openclaw_state" ]] || die "OpenClaw auth state not found: $openclaw_state"
 
@@ -390,17 +391,18 @@ install_openclaw() {
     stamp="$(date +%Y%m%d-%H%M%S)"
     cp "$openclaw_config" "$HOME/.openclaw/backups/dogegate/openclaw.json.$stamp.bak"
     cp "$openclaw_state" "$HOME/.openclaw/backups/dogegate/openclaw-agent.sqlite.$stamp.bak"
+    [[ ! -f "$openclaw_sessions" ]] || cp "$openclaw_sessions" "$HOME/.openclaw/backups/dogegate/sessions.json.$stamp.bak"
     echo "backup_dir=$HOME/.openclaw/backups/dogegate"
   fi
 
-  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$UPSTREAM_URL" "$DRY_RUN" "$openclaw_config" "$openclaw_state" <<'PY'
+  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$MODEL" "$UPSTREAM_URL" "$DRY_RUN" "$openclaw_config" "$openclaw_state" "$openclaw_sessions" <<'PY'
 import json
 import sqlite3
 import sys
 import time
 from pathlib import Path
 
-db_path, provider_name, model, upstream_url, dry_run, config_path, state_path = sys.argv[1:]
+db_path, provider_name, model, upstream_url, dry_run, config_path, state_path, sessions_path = sys.argv[1:]
 dry_run = dry_run == "1"
 conn = sqlite3.connect(db_path)
 row = conn.execute(
@@ -450,13 +452,42 @@ for agent in data.get("agents", {}).get("list", []):
     if "model" in agent:
         agent["model"] = primary
 
+sessions_file = Path(sessions_path)
+sessions = None
+cleared_sessions = 0
+override_keys = [
+    "modelOverride",
+    "providerOverride",
+    "modelOverrideSource",
+    "authProfileOverride",
+    "authProfileOverrideSource",
+    "authProfileOverrideCompactionCount",
+]
+if sessions_file.exists():
+    sessions = json.loads(sessions_file.read_text())
+    for session in sessions.values():
+        if not isinstance(session, dict):
+            continue
+        provider_override = session.get("providerOverride")
+        model_override = session.get("modelOverride")
+        if not provider_override and not model_override:
+            continue
+        selected = f"{provider_override or 'openai'}/{model_override or model}"
+        if selected != primary:
+            for key in override_keys:
+                session.pop(key, None)
+            cleared_sessions += 1
+
 if dry_run:
     print("dry_run=true")
     print(f"openclaw_model={primary}")
     print(f"openclaw_baseUrl={upstream_url}")
+    print(f"openclaw_session_overrides_to_clear={cleared_sessions}")
     raise SystemExit(0)
 
 cfg_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+if sessions is not None and cleared_sessions:
+    sessions_file.write_text(json.dumps(sessions, indent=2, ensure_ascii=False) + "\n")
 
 conn = sqlite3.connect(state_path)
 now = int(time.time() * 1000)
@@ -470,6 +501,7 @@ conn.commit()
 conn.close()
 print(f"openclaw_model={primary}")
 print(f"openclaw_baseUrl={upstream_url}")
+print(f"openclaw_session_overrides_cleared={cleared_sessions}")
 print("install_openclaw=ok")
 PY
 }

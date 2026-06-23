@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 - 2026-06-23
+
+- Clear stale OpenClaw per-session model/auth overrides during `install-openclaw`.
+- Prevent old Dashboard sessions pinned to unsupported models from bypassing the pool model.
+- Back up OpenClaw `sessions.json` before repairing session overrides.
+
 ## 0.2.1 - 2026-06-23
 
 - Stop installing `gemini-3.1-pro-high` as a stable OpenClaw/Hermes agent model.

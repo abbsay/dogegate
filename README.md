@@ -102,6 +102,8 @@ The installer backs up files first, then patches:
   - sets the default model to `openai/claude-sonnet-4-6`
 - `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`
   - stores the Antigravity Pool API key in OpenClaw's local auth profile
+- `~/.openclaw/agents/main/sessions/sessions.json`
+  - clears stale per-session model overrides that point away from the configured pool model
 - `~/.hermes/config.yaml`
   - sets Hermes to `provider: custom`
   - points `model.base_url` at Antigravity Pool
