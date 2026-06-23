@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.2.5"
+VERSION="0.2.6"
 
 usage() {
   cat <<'USAGE'
@@ -16,6 +16,7 @@ Usage:
   codex-ccswitch-antigravity install-hermes [options]
   codex-ccswitch-antigravity verify  [options]
   codex-ccswitch-antigravity verify-agents [options]
+  codex-ccswitch-antigravity open-openclaw-dashboard [options]
   codex-ccswitch-antigravity doctor  [options]
 
 Options:
@@ -41,6 +42,7 @@ Examples:
   codex-ccswitch-antigravity install-openclaw
   codex-ccswitch-antigravity install-hermes
   codex-ccswitch-antigravity verify-agents
+  codex-ccswitch-antigravity open-openclaw-dashboard
   codex-ccswitch-antigravity doctor
 USAGE
 }
@@ -701,12 +703,51 @@ verify_agents() {
     --quiet
 }
 
+open_openclaw_dashboard() {
+  local openclaw_bin="$HOME/.openclaw/bin/openclaw"
+  if [[ ! -x "$openclaw_bin" ]]; then
+    openclaw_bin="$(command -v openclaw || true)"
+  fi
+  [[ -n "$openclaw_bin" && -x "$openclaw_bin" ]] || die "OpenClaw CLI not found"
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "dry_run=true"
+    echo "would_quit_openclaw_app=true"
+    echo "would_restart_gateway=true"
+    echo "would_wait_for_health=true"
+    echo "would_open_dashboard=true"
+    return
+  fi
+
+  osascript -e 'tell application "OpenClaw" to quit' >/dev/null 2>&1 || true
+  sleep 1
+  pkill -x OpenClaw >/dev/null 2>&1 || true
+
+  "$openclaw_bin" gateway restart >/dev/null
+
+  local ready=0
+  local attempt
+  for attempt in $(seq 1 45); do
+    if "$openclaw_bin" gateway call health --json >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 1
+  done
+  [[ "$ready" -eq 1 ]] || die "OpenClaw gateway did not become healthy within 45 seconds"
+
+  "$openclaw_bin" dashboard --yes >/dev/null
+  echo "openclaw_gateway=healthy"
+  echo "openclaw_dashboard=opened"
+}
+
 case "$COMMAND" in
   install) install ;;
   install-openclaw) install_openclaw ;;
   install-hermes) install_hermes ;;
   verify) verify ;;
   verify-agents) verify_agents ;;
+  open-openclaw-dashboard) open_openclaw_dashboard ;;
   doctor) doctor ;;
   *) die "unknown command: $COMMAND" ;;
 esac

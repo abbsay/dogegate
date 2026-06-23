@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6 - 2026-06-23
+
+- Add `open-openclaw-dashboard` to recover from the OpenClaw macOS Dashboard
+  startup race where the window opens before the gateway sidecars are ready.
+- Document the Dashboard unavailable workaround without changing model routing
+  or auth.
+
 ## 0.2.5 - 2026-06-23
 
 - Add `--agent-models` for the OpenClaw agent-safe model allowlist.

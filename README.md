@@ -205,6 +205,26 @@ Expected outputs include two `pong` responses:
 - one from an OpenClaw `agent --local` turn
 - one from a Hermes `chat -q` turn with the `hermes-cli` toolset enabled
 
+## OpenClaw Dashboard
+
+OpenClaw for macOS can open its Dashboard window before the local gateway has
+finished restarting its sidecars. In that case the app can show:
+
+```text
+Dashboard unavailable
+Could not connect to the server.
+```
+
+If the gateway health check is otherwise OK, use:
+
+```bash
+./bin/codex-ccswitch-antigravity open-openclaw-dashboard
+```
+
+This command quits the stale OpenClaw app window, restarts the gateway, waits
+until `openclaw gateway call health` succeeds, then opens the Dashboard through
+OpenClaw's CLI. It does not rewrite model routing or auth.
+
 ## Rollback
 
 Backups are written to:
