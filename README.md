@@ -3,6 +3,8 @@
 Make Codex Desktop and Codex CLI route through a CC Switch profile backed by an
 Antigravity Pool OpenAI-compatible gateway.
 
+For the full system map, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 This project packages the setup that was proven locally:
 
 ```text
@@ -26,6 +28,11 @@ Experimental but usable. The local setup has been verified with:
 - CC Switch local proxy on `127.0.0.1:15721`
 - Antigravity Pool upstream on `127.0.0.1:8045`
 - OpenAI Responses-compatible `/v1/responses`
+
+Current v0.1.0 automation covers Codex CLI and Codex Desktop. The broader
+Dogegate stack is intended to cover Claude Code, Claude Cowork, Codex CLI, and
+Codex Desktop through CC Switch, with Antigravity Tools as the primary upstream
+and Antigravity Tools LS as a standby upstream.
 
 ## Install
 
@@ -151,4 +158,3 @@ open -a "CC Switch"
 
 This tool preserves auth payloads stored by CC Switch but never prints them. It
 only rewrites provider routing config.
-
