@@ -28,7 +28,7 @@ Experimental but usable. The local setup has been verified with:
 - Antigravity Pool upstream on `127.0.0.1:8045`
 - OpenAI Responses-compatible `/v1/responses`
 
-Current v0.3.x automation covers Codex CLI, Codex Desktop, OpenClaw, Hermes
+Current v0.4.x automation covers Codex CLI, Codex Desktop, OpenClaw, Hermes
 Agent, and an opt-in Claude Cowork repair path. The broader Dogegate stack is
 intended to cover Claude Code, Claude Cowork, Codex CLI, Codex Desktop,
 OpenClaw, and Hermes through CC Switch and Antigravity Tools, with Antigravity

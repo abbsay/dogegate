@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0 - 2026-06-28
+
+- Promote the Codex OAuth switching and Claude Cowork gateway repair work as
+  the next stable Dogegate setup release.
+- Keep Codex official OAuth and third-party API switching separated while
+  preserving the direct Claude Code CLI route.
+- Include the opt-in `repair-cowork` command for Claude Code's macOS Cowork
+  desktop app.
+
 ## 0.3.3 - 2026-06-28
 
 - Add `repair-cowork` for Claude Code's macOS Cowork desktop app.
