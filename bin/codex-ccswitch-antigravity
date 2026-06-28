@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.3.1"
+VERSION="0.3.2"
 
 usage() {
   cat <<'USAGE'
@@ -209,6 +209,7 @@ doctor() {
   [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
   python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$CODEX_CONFIG" "$SETTINGS_JSON" <<'PY'
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -225,7 +226,20 @@ proxy = conn.execute(
 backup = conn.execute(
     "select original_config from proxy_live_backup where app_type='codex'"
 ).fetchone()
+common = conn.execute("select value from settings where key='common_config_codex'").fetchone()
 conn.close()
+
+def extract_experimental_bearer_token(cfg: str) -> str:
+    for line in cfg.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("experimental_bearer_token"):
+            continue
+        if "=" not in stripped:
+            continue
+        raw = stripped.split("=", 1)[1].strip()
+        if len(raw) >= 2 and raw[0] in ("'", '"') and raw[-1] == raw[0]:
+            return raw[1:-1].strip()
+    return ""
 
 def print_interesting_config(prefix: str, cfg: str) -> None:
     print(f"{prefix}_has_custom={'[model_providers.custom]' in cfg}")
@@ -239,6 +253,8 @@ def print_interesting_config(prefix: str, cfg: str) -> None:
             print(f"{prefix}: experimental_bearer_token = <redacted>")
 
 print(f"ccswitch_db={db_path}")
+print(f"env_CODEX_API_KEY_present={bool(os.environ.get('CODEX_API_KEY'))}")
+print(f"env_OPENAI_API_KEY_present={bool(os.environ.get('OPENAI_API_KEY'))}")
 if Path(settings_json).exists():
     try:
         settings = json.loads(Path(settings_json).read_text())
@@ -248,14 +264,26 @@ if Path(settings_json).exists():
         "preserve_codex_official_auth_on_switch="
         f"{bool(settings.get('preserveCodexOfficialAuthOnSwitch'))}"
     )
+    print(f"settings_current_provider_codex={settings.get('currentProviderCodex') or ''}")
 else:
     print(f"settings_json_missing={settings_json}")
 print(f"provider_found={bool(provider)}")
 if provider:
-    cfg = json.loads(provider[2]).get("config", "")
+    payload = json.loads(provider[2])
+    cfg = payload.get("config", "")
+    auth = payload.get("auth") or {}
     print(f"provider_id={provider[0]}")
     print(f"provider_is_current={provider[1]}")
+    print(
+        "provider_has_api_key="
+        f"{bool((auth.get('OPENAI_API_KEY') or '').strip() or extract_experimental_bearer_token(cfg))}"
+    )
     print_interesting_config("provider_config", cfg)
+if common:
+    common_cfg = common[0]
+    print(f"common_config_has_custom={'[model_providers.custom]' in common_cfg}")
+    print(f"common_config_has_proxy_url={'127.0.0.1:15721' in common_cfg}")
+    print(f"common_config_has_model_provider={'model_provider' in common_cfg}")
 if proxy:
     print(f"proxy_enabled={proxy[0]} enabled={proxy[1]} listen={proxy[2]}:{proxy[3]}")
 print(f"live_backup_found={bool(backup)}")
@@ -315,6 +343,7 @@ patch_live_config = patch_live_config == "1"
 select_provider = select_provider == "1"
 preserve_codex_auth = preserve_codex_auth == "1"
 dry_run = dry_run == "1"
+update_proxy_config = select_provider or patch_live_config
 
 def normalize_pool_models(raw: str, default_model: str) -> list[str]:
     seen = set()
@@ -349,6 +378,7 @@ TOP_LEVEL_KEYS = {
     "wire_api",
     "experimental_bearer_token",
 }
+COMMON_ROUTE_KEYS = TOP_LEVEL_KEYS | {"model_catalog_json", "model_reasoning_effort"}
 
 def toml_string(value: str) -> str:
     return json.dumps(value)
@@ -407,9 +437,51 @@ def transform_config(text: str, provider_url: str, bearer_token: str = "") -> st
     body = "\n".join(line for line in kept).strip()
     return "\n".join(header) + ("\n" + body if body else "") + "\n" + "\n".join(provider) + "\n"
 
+def extract_experimental_bearer_token(cfg: str) -> str:
+    for line in cfg.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("experimental_bearer_token"):
+            continue
+        if "=" not in stripped:
+            continue
+        raw = stripped.split("=", 1)[1].strip()
+        if len(raw) >= 2 and raw[0] in ("'", '"') and raw[-1] == raw[0]:
+            return raw[1:-1].strip()
+    return ""
+
 def extract_provider_token(payload: dict) -> str:
     token = ((payload.get("auth") or {}).get("OPENAI_API_KEY") or "").strip()
-    return token if token else ""
+    if token:
+        return token
+    cfg = payload.get("config", "")
+    return extract_experimental_bearer_token(cfg) if isinstance(cfg, str) else ""
+
+def sanitize_common_config(text: str) -> str:
+    lines = text.splitlines()
+    kept = []
+    current_section = None
+    skipping_provider = False
+
+    for raw in lines:
+        stripped = raw.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            current_section = stripped
+            skipping_provider = stripped.startswith("[model_providers")
+            if skipping_provider:
+                continue
+
+        if skipping_provider:
+            continue
+
+        if current_section is None and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in COMMON_ROUTE_KEYS:
+                continue
+
+        kept.append(raw)
+
+    body = "\n".join(kept).strip()
+    return body + "\n" if body else ""
 
 conn = sqlite3.connect(db_path)
 conn.row_factory = sqlite3.Row
@@ -421,12 +493,13 @@ if not provider:
     raise SystemExit(f"provider not found in CC Switch DB: {provider_name}")
 
 provider_payload = json.loads(provider["settings_config"])
-provider_payload["config"] = transform_config(provider_payload.get("config", ""), upstream_url)
+existing_provider_api_key = extract_provider_token(provider_payload)
 antigravity_api_key = read_antigravity_api_key()
-if antigravity_api_key:
+provider_api_key = antigravity_api_key or existing_provider_api_key
+provider_payload["config"] = transform_config(provider_payload.get("config", ""), upstream_url)
+if provider_api_key:
     auth = provider_payload.setdefault("auth", {})
-    auth["OPENAI_API_KEY"] = antigravity_api_key
-provider_api_key = antigravity_api_key or extract_provider_token(provider_payload)
+    auth["OPENAI_API_KEY"] = provider_api_key
 provider_payload["modelCatalog"] = {
     "models": [
         {
@@ -442,12 +515,15 @@ updates = []
 updates.append(("provider.settings_config", provider_payload["config"]))
 
 common = conn.execute("select value from settings where key='common_config_codex'").fetchone()
-common_value = transform_config(common["value"] if common else "", proxy_url)
-updates.append(("settings.common_config_codex", common_value))
+common_value = sanitize_common_config(common["value"]) if common else None
+common_changed = common is not None and common_value != common["value"]
+if common_changed:
+    updates.append(("settings.common_config_codex", common_value))
 
 proxy_parts = proxy_url.removeprefix("http://").removeprefix("https://").split("/", 1)[0].rsplit(":", 1)
 proxy_host = proxy_parts[0]
 proxy_port = int(proxy_parts[1]) if len(proxy_parts) == 2 and proxy_parts[1].isdigit() else 15721
+proxy_update_label = f"{proxy_host}:{proxy_port}" if update_proxy_config else "skipped"
 
 backup = conn.execute("select original_config from proxy_live_backup where app_type='codex'").fetchone()
 backup_payload = None
@@ -477,8 +553,10 @@ if dry_run:
             elif line.strip().startswith("experimental_bearer_token"):
                 print("experimental_bearer_token = <redacted>")
     print(f"provider_auth_update={bool(antigravity_api_key)}")
+    print(f"provider_has_api_key={bool(provider_api_key)}")
     print(f"provider_model_catalog_count={len(pool_models)}")
-    print(f"proxy_config_update={proxy_host}:{proxy_port}")
+    print(f"common_config_sanitized={common_changed}")
+    print(f"proxy_config_update={proxy_update_label}")
     print(f"preserve_codex_official_auth_on_switch={preserve_codex_auth}")
     raise SystemExit(0)
 
@@ -491,24 +569,23 @@ if select_provider:
     conn.execute("update providers set is_current=0 where app_type='codex'")
     conn.execute("update providers set is_current=1 where app_type='codex' and id=?", (provider["id"],))
 
-if common:
+if common_changed:
     conn.execute("update settings set value=? where key='common_config_codex'", (common_value,))
-else:
-    conn.execute("insert into settings(key, value) values('common_config_codex', ?)", (common_value,))
 
-conn.execute(
-    """
-    insert into proxy_config(app_type, proxy_enabled, enabled, listen_address, listen_port, updated_at)
-    values('codex', 1, 1, ?, ?, datetime('now'))
-    on conflict(app_type) do update set
-      proxy_enabled=1,
-      enabled=1,
-      listen_address=excluded.listen_address,
-      listen_port=excluded.listen_port,
-      updated_at=datetime('now')
-    """,
-    (proxy_host, proxy_port),
-)
+if update_proxy_config:
+    conn.execute(
+        """
+        insert into proxy_config(app_type, proxy_enabled, enabled, listen_address, listen_port, updated_at)
+        values('codex', 1, 1, ?, ?, datetime('now'))
+        on conflict(app_type) do update set
+          proxy_enabled=1,
+          enabled=1,
+          listen_address=excluded.listen_address,
+          listen_port=excluded.listen_port,
+          updated_at=datetime('now')
+        """,
+        (proxy_host, proxy_port),
+    )
 
 if backup_payload is not None:
     conn.execute(
@@ -530,7 +607,9 @@ if select_provider or preserve_codex_auth:
         data = {}
         settings_path.parent.mkdir(parents=True, exist_ok=True)
     if select_provider:
-        data["currentProviderCodex"] = provider_name
+        data["currentProviderCodex"] = provider["id"]
+    elif data.get("currentProviderCodex") == provider_name:
+        data["currentProviderCodex"] = provider["id"]
     if preserve_codex_auth:
         data["preserveCodexOfficialAuthOnSwitch"] = True
     settings_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
@@ -541,7 +620,9 @@ print(f"pool_models_count={len(pool_models)}")
 print(f"codex_live_proxy={proxy_url}")
 print(f"ccswitch_upstream={upstream_url}")
 print(f"provider_auth_update={bool(antigravity_api_key)}")
-print(f"proxy_config_update={proxy_host}:{proxy_port}")
+print(f"provider_has_api_key={bool(provider_api_key)}")
+print(f"common_config_sanitized={common_changed}")
+print(f"proxy_config_update={proxy_update_label}")
 print(f"preserve_codex_official_auth_on_switch={preserve_codex_auth}")
 print("install=ok")
 PY

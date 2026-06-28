@@ -166,10 +166,11 @@ The installer backs up files first, then patches:
 
 - `~/.cc-switch/cc-switch.db`
   - `providers.settings_config` for the selected Codex provider
-  - `settings.common_config_codex`
+  - sanitizes `settings.common_config_codex` when older Dogegate installs left
+    provider/model/model catalog/base URL/token fields there
   - `proxy_live_backup.original_config` when present
 - `~/.cc-switch/settings.json`
-  - sets `currentProviderCodex`
+  - sets `currentProviderCodex` to the provider id
   - enables `preserveCodexOfficialAuthOnSwitch` so Codex official OAuth login
     remains in `~/.codex/auth.json` while third-party traffic uses CC Switch
 - `~/.codex/config.toml`
@@ -246,6 +247,12 @@ features, while model traffic is routed to the selected third-party provider.
 Use `--no-preserve-codex-auth` only if you intentionally want CC Switch's older
 compatibility behavior where third-party switching may rewrite `auth.json`.
 
+`settings.common_config_codex` must not contain the Antigravity route. CC Switch
+merges common config into every Codex provider that opts into common config,
+including `OpenAI Official`. Dogegate therefore keeps the Antigravity route in
+the `Antigravity-Pool` provider itself and only leaves non-routing shared TOML
+in common config, such as plugin, MCP, desktop, or project trust settings.
+
 ## Doctor
 
 Inspect the current setup without changing anything:
@@ -257,15 +264,27 @@ Inspect the current setup without changing anything:
 Useful healthy signs:
 
 ```text
+env_CODEX_API_KEY_present=False
+env_OPENAI_API_KEY_present=False
 preserve_codex_official_auth_on_switch=True
 provider_found=True
+provider_has_api_key=True
 provider_config_has_custom=True
 provider_config_has_experimental_bearer_token=False
+common_config_has_custom=False
+common_config_has_proxy_url=False
+common_config_has_model_provider=False
+provider_config: base_url = "http://127.0.0.1:8045/v1"
+```
+
+When the third-party proxy route is currently selected, the live Codex config
+should also show:
+
+```text
 codex_config_has_custom=True
 codex_config_has_proxy_placeholder=True
 codex_config: model_provider = "custom"
 codex_config: base_url = "http://127.0.0.1:15721/v1"
-provider_config: base_url = "http://127.0.0.1:8045/v1"
 ```
 
 ## Verify

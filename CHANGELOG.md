@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.2 - 2026-06-28
+
+- Stop writing Antigravity route fields into CC Switch's global
+  `settings.common_config_codex`, because common config is also merged into
+  `OpenAI Official` and can make official OAuth sessions hit the local proxy.
+- Repair existing Codex common config by removing provider/model/model catalog/
+  base URL/token fields while keeping non-routing shared TOML such as plugins,
+  MCP servers, and project trust settings.
+- Store the Antigravity Pool API key in the Codex provider auth payload and keep
+  the provider config as the real upstream route.
+- Write `currentProviderCodex` as the CC Switch provider id instead of the
+  display name.
+- Expand `doctor` output for Codex provider key, current-provider, and common
+  config contamination checks, plus API-key environment variables that can
+  override official OAuth.
+
 ## 0.3.1 - 2026-06-28
 
 - Enable CC Switch Codex official auth preservation by default during install.
