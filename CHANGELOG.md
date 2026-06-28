@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.3 - 2026-06-28
+
+- Add `repair-cowork` for Claude Code's macOS Cowork desktop app.
+- Repair the current CC Switch `claude-desktop` Antigravity provider by mapping
+  Cowork aliases to Claude-family upstream models instead of Gemini routes that
+  can fail desktop beta/tool requests with `INVALID_ARGUMENT`.
+- Rebuild the Claude-3p gateway profile on
+  `http://127.0.0.1:15721/claude-desktop` while preserving the gateway token.
+- If the local route is stopped, start CC Switch's proxy route with a temporary
+  Claude provider, then immediately restore `~/.claude/settings.json` and clear
+  the temporary takeover state so Claude Code CLI remains direct.
+
 ## 0.3.2 - 2026-06-28
 
 - Stop writing Antigravity route fields into CC Switch's global

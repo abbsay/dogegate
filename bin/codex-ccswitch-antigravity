@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.3.2"
+VERSION="0.3.3"
 
 usage() {
   cat <<'USAGE'
@@ -18,6 +18,7 @@ Usage:
   codex-ccswitch-antigravity verify-agents [options]
   codex-ccswitch-antigravity open-openclaw-dashboard [options]
   codex-ccswitch-antigravity inspect-antigravity [options]
+  codex-ccswitch-antigravity repair-cowork [options]
   codex-ccswitch-antigravity doctor  [options]
 
 Options:
@@ -47,6 +48,7 @@ Examples:
   codex-ccswitch-antigravity verify-agents
   codex-ccswitch-antigravity open-openclaw-dashboard
   codex-ccswitch-antigravity inspect-antigravity
+  codex-ccswitch-antigravity repair-cowork
   codex-ccswitch-antigravity doctor
 USAGE
 }
@@ -1110,6 +1112,366 @@ for name in ("claude", "gemini", "gpt", "other"):
 PY
 }
 
+repair_cowork() {
+  need_cmd python3
+  [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
+
+  local result backup_dir needs_route_start
+  result="$(python3 - "$CCSWITCH_DB" "$SETTINGS_JSON" "$PROXY_URL" "$DRY_RUN" <<'PY'
+import json
+import secrets
+import shutil
+import socket
+import sqlite3
+import sys
+import time
+from pathlib import Path
+from urllib.parse import urlparse
+
+db_path, settings_json, proxy_url, dry_run = sys.argv[1:]
+dry_run = dry_run == "1"
+home = Path.home()
+settings_path = Path(settings_json)
+parsed_proxy = urlparse(proxy_url)
+proxy_host = parsed_proxy.hostname or "127.0.0.1"
+proxy_port = parsed_proxy.port or 15721
+proxy_origin = f"http://{proxy_host}:{proxy_port}"
+gateway_url = f"{proxy_origin}/claude-desktop"
+profile_id = "00000000-0000-4000-8000-000000157210"
+paths = {
+    "db": Path(db_path),
+    "cc_settings": settings_path,
+    "claude_settings": home / ".claude" / "settings.json",
+    "cowork_profile": home / "Library" / "Application Support" / "Claude-3p" / "configLibrary" / f"{profile_id}.json",
+    "cowork_meta": home / "Library" / "Application Support" / "Claude-3p" / "configLibrary" / "_meta.json",
+    "claude_normal_config": home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+    "claude_3p_config": home / "Library" / "Application Support" / "Claude-3p" / "claude_desktop_config.json",
+}
+
+def route_running() -> bool:
+    try:
+        with socket.create_connection((proxy_host, proxy_port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+def load_json(path: Path, default):
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return default
+
+def dump_json(path: Path, value) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+
+def backup_files():
+    if dry_run:
+        return None
+    backup_dir = home / ".cc-switch" / "backups" / "claude-cowork" / f"repair-{time.strftime('%Y%m%d-%H%M%S')}"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    for name, path in paths.items():
+        if path.exists():
+            suffix = path.suffix or ".bak"
+            shutil.copy2(path, backup_dir / f"{name}{suffix}")
+    return backup_dir
+
+safe_routes = {
+    "claude-opus-4-6": {
+        "model": "claude-opus-4-6",
+        "labelOverride": "Claude Opus 4.6",
+        "supports1m": True,
+    },
+    "claude-opus-4-8": {
+        "model": "claude-opus-4-6",
+        "labelOverride": "Claude Opus 4.6",
+        "supports1m": True,
+    },
+    "claude-sonnet-4-6": {
+        "model": "claude-sonnet-4-6",
+        "labelOverride": "Claude Sonnet 4.6",
+        "supports1m": True,
+    },
+    "claude-haiku-4-5": {
+        "model": "claude-sonnet-4-6",
+        "labelOverride": "Claude Sonnet 4.6",
+        "supports1m": True,
+    },
+    "claude-3-5-sonnet-20241022": {
+        "model": "claude-sonnet-4-6",
+        "labelOverride": "Claude Sonnet 4.6",
+        "supports1m": True,
+    },
+    "claude-fable-5": {
+        "model": "claude-sonnet-4-6",
+        "labelOverride": "Claude Sonnet 4.6",
+        "supports1m": True,
+    },
+}
+model_order = [
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-3-5-sonnet-20241022",
+    "claude-fable-5",
+    "claude-opus-4-8",
+]
+
+running_before = route_running()
+backup_dir = backup_files()
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+provider = conn.execute(
+    "select id, name, settings_config, meta from providers where app_type='claude-desktop' and is_current=1 limit 1"
+).fetchone()
+if not provider:
+    raise SystemExit("current claude-desktop provider not found in CC Switch DB")
+
+settings_config = json.loads(provider["settings_config"] or "{}")
+provider_name = provider["name"]
+base_url = ((settings_config.get("env") or {}).get("ANTHROPIC_BASE_URL") or "").lower()
+is_antigravity_like = (
+    "127.0.0.1:8045" in base_url
+    or "localhost:8045" in base_url
+    or "anti" in provider_name.lower()
+    or "antigravity" in provider_name.lower()
+)
+routes_patched = False
+if is_antigravity_like:
+    meta = json.loads(provider["meta"] or "{}")
+    meta["claudeDesktopMode"] = "proxy"
+    meta["claudeDesktopModelRoutes"] = safe_routes
+    routes_patched = True
+    if not dry_run:
+        conn.execute(
+            "update providers set meta=? where app_type='claude-desktop' and id=?",
+            (json.dumps(meta, ensure_ascii=False), provider["id"]),
+        )
+
+token_row = conn.execute("select value from settings where key='claude_desktop_gateway_token'").fetchone()
+profile = load_json(paths["cowork_profile"], {})
+profile_token = profile.get("inferenceGatewayApiKey") if isinstance(profile, dict) else ""
+gateway_token = (token_row["value"] if token_row else "") or profile_token or secrets.token_urlsafe(32)
+if not dry_run and not token_row:
+    conn.execute(
+        "insert or replace into settings(key, value) values('claude_desktop_gateway_token', ?)",
+        (gateway_token,),
+    )
+
+if not dry_run:
+    if not isinstance(profile, dict):
+        profile = {}
+    profile["coworkEgressAllowedHosts"] = ["*"]
+    profile["disableDeploymentModeChooser"] = True
+    profile["inferenceGatewayApiKey"] = gateway_token
+    profile["inferenceGatewayAuthScheme"] = "Bearer"
+    profile["inferenceGatewayBaseUrl"] = gateway_url
+    profile["inferenceProvider"] = "gateway"
+    if routes_patched:
+        profile["inferenceModels"] = [
+            {
+                "name": name,
+                "labelOverride": safe_routes[name]["labelOverride"],
+                "supports1m": safe_routes[name]["supports1m"],
+            }
+            for name in model_order
+            if name in safe_routes
+        ]
+    dump_json(paths["cowork_profile"], profile)
+
+    meta_profile = load_json(paths["cowork_meta"], {})
+    meta_profile["appliedId"] = profile_id
+    entries = meta_profile.get("entries")
+    if not isinstance(entries, list):
+        entries = []
+    if not any(isinstance(item, dict) and item.get("id") == profile_id for item in entries):
+        entries.append({"id": profile_id, "name": "CC Switch"})
+    meta_profile["entries"] = entries
+    dump_json(paths["cowork_meta"], meta_profile)
+
+    for key in ("claude_normal_config", "claude_3p_config"):
+        cfg = load_json(paths[key], {})
+        if not isinstance(cfg, dict):
+            cfg = {}
+        cfg["deploymentMode"] = "3p"
+        dump_json(paths[key], cfg)
+
+needs_route_start = not running_before
+temp_id = "dogegate-temp-claude-live-8045"
+original_current_claude = None
+if needs_route_start:
+    if not paths["claude_settings"].exists():
+        raise SystemExit(f"Claude Code settings not found: {paths['claude_settings']}")
+    claude_live = load_json(paths["claude_settings"], {})
+    cc_settings = load_json(paths["cc_settings"], {})
+    original_current_claude = cc_settings.get("currentProviderClaude")
+    if not dry_run:
+        conn.execute("update providers set is_current=0 where app_type='claude'")
+        conn.execute(
+            """
+            insert into providers(id, app_type, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue)
+            values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            on conflict(id, app_type) do update set
+              name=excluded.name,
+              settings_config=excluded.settings_config,
+              category=excluded.category,
+              meta=excluded.meta,
+              is_current=excluded.is_current,
+              notes=excluded.notes
+            """,
+            (
+                temp_id,
+                "claude",
+                "Dogegate Temp Claude Live 8045",
+                json.dumps(claude_live, ensure_ascii=False),
+                None,
+                "custom",
+                int(time.time()),
+                9999,
+                "Temporary provider used to start the CC Switch local proxy for Claude Desktop/Cowork.",
+                None,
+                None,
+                "{}",
+                1,
+                0,
+            ),
+        )
+        conn.execute(
+            """
+            insert into proxy_config(app_type, proxy_enabled, enabled, listen_address, listen_port, live_takeover_active, updated_at)
+            values('claude',1,1,?,?,1,datetime('now'))
+            on conflict(app_type) do update set
+              proxy_enabled=1,
+              enabled=1,
+              listen_address=excluded.listen_address,
+              listen_port=excluded.listen_port,
+              live_takeover_active=1,
+              updated_at=datetime('now')
+            """,
+            (proxy_host, proxy_port),
+        )
+        conn.execute(
+            "update proxy_config set proxy_enabled=1, enabled=0, live_takeover_active=0, listen_address=?, listen_port=?, updated_at=datetime('now') where app_type in ('codex','gemini')",
+            (proxy_host, proxy_port),
+        )
+        cc_settings["currentProviderClaude"] = temp_id
+        cc_settings["enableLocalProxy"] = True
+        cc_settings["proxyConfirmed"] = True
+        dump_json(paths["cc_settings"], cc_settings)
+
+conn.commit()
+conn.close()
+
+print(f"backup_dir={backup_dir or 'dry-run'}")
+print(f"cowork_provider={provider_name}")
+print(f"cowork_routes_patched={routes_patched}")
+print(f"cowork_gateway={gateway_url}")
+print(f"route_running_before={running_before}")
+print(f"needs_route_start={needs_route_start}")
+print(f"original_current_provider_claude={original_current_claude or ''}")
+print("repair_cowork_prepare=ok")
+PY
+)"
+  echo "$result"
+  backup_dir="$(printf '%s\n' "$result" | awk -F= '/^backup_dir=/{print $2; exit}')"
+  needs_route_start="$(printf '%s\n' "$result" | awk -F= '/^needs_route_start=/{print $2; exit}')"
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+
+  if [[ "$needs_route_start" == "True" || "$needs_route_start" == "true" ]]; then
+    pkill -f '/Applications/CC Switch.app/Contents/MacOS/cc-switch' >/dev/null 2>&1 || true
+    sleep 1
+    open -a 'CC Switch'
+
+    local ready=0
+    local attempt
+    for attempt in $(seq 1 45); do
+      if python3 - "$PROXY_URL" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+from urllib.parse import urlparse
+
+parsed = urlparse(sys.argv[1])
+host = parsed.hostname or "127.0.0.1"
+port = parsed.port or 15721
+with socket.create_connection((host, port), timeout=1):
+    pass
+PY
+      then
+        ready=1
+        break
+      fi
+      sleep 1
+    done
+
+    python3 - "$CCSWITCH_DB" "$SETTINGS_JSON" "$backup_dir" <<'PY'
+import json
+import shutil
+import sqlite3
+import sys
+from pathlib import Path
+
+db_path, settings_json, backup_dir = sys.argv[1:]
+home = Path.home()
+backup = Path(backup_dir)
+paths = {
+    "cc_settings": Path(settings_json),
+    "claude_settings": home / ".claude" / "settings.json",
+}
+
+def load_json(path: Path, default):
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return default
+
+def dump_json(path: Path, value) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+
+claude_backup = backup / "claude_settings.json"
+if claude_backup.exists():
+    shutil.copy2(claude_backup, paths["claude_settings"])
+
+settings_backup = backup / "cc_settings.json"
+if settings_backup.exists() and paths["cc_settings"].exists():
+    original = load_json(settings_backup, {})
+    current = load_json(paths["cc_settings"], {})
+    if "currentProviderClaude" in original:
+        current["currentProviderClaude"] = original.get("currentProviderClaude")
+    else:
+        current.pop("currentProviderClaude", None)
+    current["enableLocalProxy"] = original.get("enableLocalProxy", current.get("enableLocalProxy", True))
+    current["proxyConfirmed"] = original.get("proxyConfirmed", current.get("proxyConfirmed", True))
+    dump_json(paths["cc_settings"], current)
+
+conn = sqlite3.connect(db_path)
+try:
+    conn.execute("begin")
+    conn.execute("update proxy_config set proxy_enabled=1, enabled=0, live_takeover_active=0, updated_at=datetime('now') where app_type in ('claude','codex','gemini')")
+    conn.execute("delete from proxy_live_backup where app_type='claude'")
+    conn.execute("delete from providers where app_type='claude' and id='dogegate-temp-claude-live-8045'")
+    conn.execute("update providers set is_current=0 where app_type='claude'")
+    conn.commit()
+finally:
+    conn.close()
+print("claude_cli_restored=true")
+print("temporary_takeover_cleared=true")
+PY
+
+    [[ "$ready" -eq 1 ]] || die "CC Switch local route did not start on $PROXY_URL"
+    echo "cowork_route_start=started"
+  else
+    echo "cowork_route_start=already_running"
+  fi
+}
+
 case "$COMMAND" in
   install) install ;;
   install-openclaw) install_openclaw ;;
@@ -1118,6 +1480,7 @@ case "$COMMAND" in
   verify-agents) verify_agents ;;
   open-openclaw-dashboard) open_openclaw_dashboard ;;
   inspect-antigravity) inspect_antigravity ;;
+  repair-cowork) repair_cowork ;;
   doctor) doctor ;;
   *) die "unknown command: $COMMAND" ;;
 esac

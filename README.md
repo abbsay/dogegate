@@ -28,10 +28,11 @@ Experimental but usable. The local setup has been verified with:
 - Antigravity Pool upstream on `127.0.0.1:8045`
 - OpenAI Responses-compatible `/v1/responses`
 
-Current v0.2.x automation covers Codex CLI, Codex Desktop, OpenClaw, and Hermes
-Agent. The broader Dogegate stack is intended to cover Claude Code, Claude
-Cowork, Codex CLI, Codex Desktop, OpenClaw, and Hermes through CC Switch and
-Antigravity Tools, with Antigravity Tools LS as a standby upstream.
+Current v0.3.x automation covers Codex CLI, Codex Desktop, OpenClaw, Hermes
+Agent, and an opt-in Claude Cowork repair path. The broader Dogegate stack is
+intended to cover Claude Code, Claude Cowork, Codex CLI, Codex Desktop,
+OpenClaw, and Hermes through CC Switch and Antigravity Tools, with Antigravity
+Tools LS as a standby upstream.
 
 Stable agent model:
 
@@ -160,6 +161,13 @@ Inspect the local Antigravity Tools gateway:
 ./bin/codex-ccswitch-antigravity inspect-antigravity
 ```
 
+Repair Claude Code's macOS Cowork desktop gateway without changing Codex OAuth
+or the direct Claude Code CLI route:
+
+```bash
+./bin/codex-ccswitch-antigravity repair-cowork
+```
+
 ## What It Changes
 
 The installer backs up files first, then patches:
@@ -189,6 +197,18 @@ The installer backs up files first, then patches:
   - sets Hermes to `provider: custom`
   - points `model.base_url` at Antigravity Pool
   - sets `model.max_tokens: 4096` for pool compatibility
+
+The opt-in `repair-cowork` command additionally backs up and patches:
+
+- `~/.cc-switch/cc-switch.db`
+  - repairs the current `claude-desktop` Antigravity provider model routes
+  - keeps Codex proxy takeover disabled
+- `~/Library/Application Support/Claude-3p/configLibrary/`
+  - points Cowork at `http://127.0.0.1:15721/claude-desktop`
+  - refreshes the visible model list with Claude-family labels
+- `~/.claude/settings.json`
+  - only when the local route is stopped, temporarily uses it to start the CC
+    Switch route and then restores the original file immediately
 
 Default pool model list:
 
@@ -252,6 +272,30 @@ merges common config into every Codex provider that opts into common config,
 including `OpenAI Official`. Dogegate therefore keeps the Antigravity route in
 the `Antigravity-Pool` provider itself and only leaves non-routing shared TOML
 in common config, such as plugin, MCP, desktop, or project trust settings.
+
+## Claude Cowork
+
+Claude Code CLI and Claude Cowork use different local surfaces. CLI can work
+directly through Antigravity Tools on `http://127.0.0.1:8045`, while Cowork's
+macOS desktop 3P mode expects a CC Switch gateway profile at
+`http://127.0.0.1:15721/claude-desktop`.
+
+If Cowork shows `API Error: 400 Request contains an invalid argument`, run:
+
+```bash
+./bin/codex-ccswitch-antigravity repair-cowork
+```
+
+The repair keeps Cowork aliases on Claude-family upstream models:
+
+```text
+claude-opus-4-8 -> claude-opus-4-6
+claude-fable-5  -> claude-sonnet-4-6
+claude-haiku-4-5 -> claude-sonnet-4-6
+```
+
+This avoids Gemini desktop beta/tool request failures while preserving the
+working Claude Code CLI config and Codex OAuth setup.
 
 ## Doctor
 
