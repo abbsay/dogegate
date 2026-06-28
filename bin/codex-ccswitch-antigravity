@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.3.0"
+VERSION="0.3.1"
 
 usage() {
   cat <<'USAGE'
@@ -34,6 +34,7 @@ Options:
   --backup-dir PATH          Backup directory (default: ~/.cc-switch/backups/codex-antigravity)
   --no-live-config           Do not patch ~/.codex/config.toml
   --no-select-provider       Do not mark provider current in CC Switch DB
+  --no-preserve-codex-auth   Do not enable CC Switch Codex official auth preservation
   --restart-ccswitch         Restart CC Switch after install
   --run-verify               Run Codex verification after install
   --dry-run                  Show planned changes without writing
@@ -95,6 +96,7 @@ RESTART_CCSWITCH=0
 RUN_VERIFY=0
 DRY_RUN=0
 AUTO_ANTIGRAVITY=1
+PRESERVE_CODEX_AUTH=1
 POOL_MODELS_SET=0
 UPSTREAM_URL_SET=0
 
@@ -112,6 +114,7 @@ while [[ $# -gt 0 ]]; do
     --backup-dir) BACKUP_DIR="${2:?}"; shift 2 ;;
     --no-live-config) PATCH_LIVE_CONFIG=0; shift ;;
     --no-select-provider) SELECT_PROVIDER=0; shift ;;
+    --no-preserve-codex-auth) PRESERVE_CODEX_AUTH=0; shift ;;
     --restart-ccswitch) RESTART_CCSWITCH=1; shift ;;
     --run-verify) RUN_VERIFY=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
@@ -204,13 +207,13 @@ PY
 doctor() {
   need_cmd python3
   [[ -f "$CCSWITCH_DB" ]] || die "CC Switch DB not found: $CCSWITCH_DB"
-  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$CODEX_CONFIG" <<'PY'
+  python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$CODEX_CONFIG" "$SETTINGS_JSON" <<'PY'
 import json
 import sqlite3
 import sys
 from pathlib import Path
 
-db_path, provider_name, codex_config = sys.argv[1:]
+db_path, provider_name, codex_config, settings_json = sys.argv[1:]
 conn = sqlite3.connect(db_path)
 provider = conn.execute(
     "select id, is_current, settings_config from providers where app_type='codex' and name=?",
@@ -224,29 +227,45 @@ backup = conn.execute(
 ).fetchone()
 conn.close()
 
+def print_interesting_config(prefix: str, cfg: str) -> None:
+    print(f"{prefix}_has_custom={'[model_providers.custom]' in cfg}")
+    print(f"{prefix}_has_experimental_bearer_token={'experimental_bearer_token' in cfg}")
+    print(f"{prefix}_has_proxy_placeholder={'PROXY_MANAGED' in cfg}")
+    for line in cfg.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("model_provider", "model =", "base_url", "wire_api")):
+            print(f"{prefix}: {line}")
+        elif stripped.startswith("experimental_bearer_token"):
+            print(f"{prefix}: experimental_bearer_token = <redacted>")
+
 print(f"ccswitch_db={db_path}")
+if Path(settings_json).exists():
+    try:
+        settings = json.loads(Path(settings_json).read_text())
+    except Exception:
+        settings = {}
+    print(
+        "preserve_codex_official_auth_on_switch="
+        f"{bool(settings.get('preserveCodexOfficialAuthOnSwitch'))}"
+    )
+else:
+    print(f"settings_json_missing={settings_json}")
 print(f"provider_found={bool(provider)}")
 if provider:
     cfg = json.loads(provider[2]).get("config", "")
     print(f"provider_id={provider[0]}")
     print(f"provider_is_current={provider[1]}")
-    print(f"provider_config_has_custom={'[model_providers.custom]' in cfg}")
-    for line in cfg.splitlines():
-        if line.strip().startswith(("model_provider", "model =", "base_url", "wire_api")):
-            print(f"provider_config: {line}")
+    print_interesting_config("provider_config", cfg)
 if proxy:
     print(f"proxy_enabled={proxy[0]} enabled={proxy[1]} listen={proxy[2]}:{proxy[3]}")
 print(f"live_backup_found={bool(backup)}")
 if backup:
     cfg = json.loads(backup[0]).get("config", "")
-    print(f"live_backup_has_custom={'[model_providers.custom]' in cfg}")
+    print_interesting_config("live_backup", cfg)
 if Path(codex_config).exists():
     text = Path(codex_config).read_text()
     print(f"codex_config={codex_config}")
-    print(f"codex_config_has_custom={'[model_providers.custom]' in text}")
-    for line in text.splitlines():
-        if line.strip().startswith(("model_provider", "model =", "base_url", "wire_api")):
-            print(f"codex_config: {line}")
+    print_interesting_config("codex_config", text)
 else:
     print(f"codex_config_missing={codex_config}")
 PY
@@ -272,7 +291,7 @@ install() {
     echo "backup_dir=$BACKUP_DIR"
   fi
 
-  python3 - "$CCSWITCH_DB" "$CODEX_CONFIG" "$SETTINGS_JSON" "$PROVIDER_NAME" "$MODEL" "$POOL_MODELS" "$PROXY_URL" "$UPSTREAM_URL" "$PATCH_LIVE_CONFIG" "$SELECT_PROVIDER" "$DRY_RUN" <<'PY'
+  python3 - "$CCSWITCH_DB" "$CODEX_CONFIG" "$SETTINGS_JSON" "$PROVIDER_NAME" "$MODEL" "$POOL_MODELS" "$PROXY_URL" "$UPSTREAM_URL" "$PATCH_LIVE_CONFIG" "$SELECT_PROVIDER" "$PRESERVE_CODEX_AUTH" "$DRY_RUN" <<'PY'
 import json
 import sqlite3
 import sys
@@ -289,10 +308,12 @@ from pathlib import Path
     upstream_url,
     patch_live_config,
     select_provider,
+    preserve_codex_auth,
     dry_run,
 ) = sys.argv[1:]
 patch_live_config = patch_live_config == "1"
 select_provider = select_provider == "1"
+preserve_codex_auth = preserve_codex_auth == "1"
 dry_run = dry_run == "1"
 
 def normalize_pool_models(raw: str, default_model: str) -> list[str]:
@@ -326,9 +347,13 @@ TOP_LEVEL_KEYS = {
     "disable_response_storage",
     "base_url",
     "wire_api",
+    "experimental_bearer_token",
 }
 
-def transform_config(text: str, provider_url: str) -> str:
+def toml_string(value: str) -> str:
+    return json.dumps(value)
+
+def transform_config(text: str, provider_url: str, bearer_token: str = "") -> str:
     lines = text.splitlines()
     kept = []
     current_section = None
@@ -369,16 +394,22 @@ def transform_config(text: str, provider_url: str) -> str:
     provider = [
         "",
         "[model_providers.custom]",
-        f'name = "{provider_name}"',
-        f'base_url = "{provider_url}"',
+        f"name = {toml_string(provider_name)}",
+        f"base_url = {toml_string(provider_url)}",
         'wire_api = "responses"',
         "request_max_retries = 4",
         "stream_max_retries = 10",
         "stream_idle_timeout_ms = 300000",
     ]
+    if bearer_token:
+        provider.append(f"experimental_bearer_token = {toml_string(bearer_token)}")
 
     body = "\n".join(line for line in kept).strip()
     return "\n".join(header) + ("\n" + body if body else "") + "\n" + "\n".join(provider) + "\n"
+
+def extract_provider_token(payload: dict) -> str:
+    token = ((payload.get("auth") or {}).get("OPENAI_API_KEY") or "").strip()
+    return token if token else ""
 
 conn = sqlite3.connect(db_path)
 conn.row_factory = sqlite3.Row
@@ -395,6 +426,7 @@ antigravity_api_key = read_antigravity_api_key()
 if antigravity_api_key:
     auth = provider_payload.setdefault("auth", {})
     auth["OPENAI_API_KEY"] = antigravity_api_key
+provider_api_key = antigravity_api_key or extract_provider_token(provider_payload)
 provider_payload["modelCatalog"] = {
     "models": [
         {
@@ -421,12 +453,18 @@ backup = conn.execute("select original_config from proxy_live_backup where app_t
 backup_payload = None
 if backup:
     backup_payload = json.loads(backup["original_config"])
-    backup_payload["config"] = transform_config(backup_payload.get("config", ""), proxy_url)
+    backup_token = provider_api_key if preserve_codex_auth else ""
+    backup_payload["config"] = transform_config(
+        backup_payload.get("config", ""),
+        upstream_url,
+        backup_token,
+    )
     updates.append(("proxy_live_backup.original_config.config", backup_payload["config"]))
 
 live_text = None
 if patch_live_config and Path(codex_config).exists():
-    live_text = transform_config(Path(codex_config).read_text(), proxy_url)
+    live_token = "PROXY_MANAGED" if preserve_codex_auth else ""
+    live_text = transform_config(Path(codex_config).read_text(), proxy_url, live_token)
     updates.append(("codex.live_config", live_text))
 
 if dry_run:
@@ -436,9 +474,12 @@ if dry_run:
         for line in value.splitlines():
             if line.strip().startswith(("model_provider", "model =", "review_model", "base_url", "wire_api", "[model_providers.custom]")):
                 print(line)
+            elif line.strip().startswith("experimental_bearer_token"):
+                print("experimental_bearer_token = <redacted>")
     print(f"provider_auth_update={bool(antigravity_api_key)}")
     print(f"provider_model_catalog_count={len(pool_models)}")
     print(f"proxy_config_update={proxy_host}:{proxy_port}")
+    print(f"preserve_codex_official_auth_on_switch={preserve_codex_auth}")
     raise SystemExit(0)
 
 conn.execute(
@@ -482,9 +523,16 @@ if live_text is not None:
     Path(codex_config).write_text(live_text)
 
 settings_path = Path(settings_json)
-if select_provider and settings_path.exists():
-    data = json.loads(settings_path.read_text())
-    data["currentProviderCodex"] = provider_name
+if select_provider or preserve_codex_auth:
+    if settings_path.exists():
+        data = json.loads(settings_path.read_text())
+    else:
+        data = {}
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+    if select_provider:
+        data["currentProviderCodex"] = provider_name
+    if preserve_codex_auth:
+        data["preserveCodexOfficialAuthOnSwitch"] = True
     settings_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 print(f"provider={provider_name}")
@@ -494,6 +542,7 @@ print(f"codex_live_proxy={proxy_url}")
 print(f"ccswitch_upstream={upstream_url}")
 print(f"provider_auth_update={bool(antigravity_api_key)}")
 print(f"proxy_config_update={proxy_host}:{proxy_port}")
+print(f"preserve_codex_official_auth_on_switch={preserve_codex_auth}")
 print("install=ok")
 PY
 

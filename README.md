@@ -170,8 +170,12 @@ The installer backs up files first, then patches:
   - `proxy_live_backup.original_config` when present
 - `~/.cc-switch/settings.json`
   - sets `currentProviderCodex`
+  - enables `preserveCodexOfficialAuthOnSwitch` so Codex official OAuth login
+    remains in `~/.codex/auth.json` while third-party traffic uses CC Switch
 - `~/.codex/config.toml`
   - writes the current live Codex provider block unless `--no-live-config` is set
+  - uses `experimental_bearer_token = "PROXY_MANAGED"` for the local proxy route
+    instead of overwriting official OAuth login state
 - `~/.openclaw/openclaw.json`
   - points OpenClaw's OpenAI provider at Antigravity Pool
   - sets the default model to `openai/claude-sonnet-4-6`
@@ -229,6 +233,19 @@ If both are `15721`, CC Switch forwards to itself and Codex will reconnect in a
 loop. If Codex only has top-level `base_url`, it can still use `provider: openai`
 and hit the official API.
 
+Dogegate follows CC Switch v3.16.1+'s Codex official auth preservation model:
+
+```text
+~/.codex/auth.json          -> official ChatGPT / Codex OAuth login cache
+~/.codex/config.toml        -> model_provider, proxy base_url, PROXY_MANAGED token
+CC Switch provider settings -> real Antigravity upstream URL and API key
+```
+
+That means Codex Desktop can continue to see the official account for app
+features, while model traffic is routed to the selected third-party provider.
+Use `--no-preserve-codex-auth` only if you intentionally want CC Switch's older
+compatibility behavior where third-party switching may rewrite `auth.json`.
+
 ## Doctor
 
 Inspect the current setup without changing anything:
@@ -240,9 +257,12 @@ Inspect the current setup without changing anything:
 Useful healthy signs:
 
 ```text
+preserve_codex_official_auth_on_switch=True
 provider_found=True
 provider_config_has_custom=True
+provider_config_has_experimental_bearer_token=False
 codex_config_has_custom=True
+codex_config_has_proxy_placeholder=True
 codex_config: model_provider = "custom"
 codex_config: base_url = "http://127.0.0.1:15721/v1"
 provider_config: base_url = "http://127.0.0.1:8045/v1"

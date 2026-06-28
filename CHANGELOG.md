@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1 - 2026-06-28
+
+- Enable CC Switch Codex official auth preservation by default during install.
+- Keep Codex official OAuth login in `~/.codex/auth.json` while routing
+  third-party model traffic through CC Switch.
+- Write the proxy placeholder token to Codex `config.toml` as
+  `experimental_bearer_token = "PROXY_MANAGED"` instead of relying on
+  `auth.json` for the proxied third-party route.
+- Preserve the CC Switch live backup as the real Antigravity upstream config
+  with a provider-scoped token so disabling takeover can restore a working
+  third-party setup without replacing official OAuth auth.
+- Add `--no-preserve-codex-auth` for users who intentionally want the older
+  CC Switch compatibility behavior.
+
 ## 0.3.0 - 2026-06-23
 
 - Make Antigravity Tools the source of truth for pool metadata by default.
