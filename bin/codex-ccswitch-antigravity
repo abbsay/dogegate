@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.4.0"
+VERSION="0.4.1"
 
 usage() {
   cat <<'USAGE'
@@ -1179,44 +1179,56 @@ def backup_files():
     return backup_dir
 
 safe_routes = {
-    "claude-opus-4-6": {
-        "model": "claude-opus-4-6",
-        "labelOverride": "Claude Opus 4.6",
-        "supports1m": True,
-    },
-    "claude-opus-4-8": {
-        "model": "claude-opus-4-6",
-        "labelOverride": "Claude Opus 4.6",
-        "supports1m": True,
-    },
     "claude-sonnet-4-6": {
         "model": "claude-sonnet-4-6",
         "labelOverride": "Claude Sonnet 4.6",
         "supports1m": True,
     },
-    "claude-haiku-4-5": {
-        "model": "claude-sonnet-4-6",
-        "labelOverride": "Claude Sonnet 4.6",
+    "claude-opus-gemini-3-1-pro-high": {
+        "model": "gemini-3.1-pro-high",
+        "labelOverride": "Gemini 3.1 Pro High",
         "supports1m": True,
     },
-    "claude-3-5-sonnet-20241022": {
-        "model": "claude-sonnet-4-6",
-        "labelOverride": "Claude Sonnet 4.6",
+    "claude-sonnet-gemini-3-1-pro-low": {
+        "model": "gemini-3.1-pro-low",
+        "labelOverride": "Gemini 3.1 Pro Low",
         "supports1m": True,
     },
-    "claude-fable-5": {
-        "model": "claude-sonnet-4-6",
-        "labelOverride": "Claude Sonnet 4.6",
+    "claude-haiku-gemini-3-flash-agent": {
+        "model": "gemini-3-flash-agent",
+        "labelOverride": "Gemini 3 Flash Agent",
+        "supports1m": True,
+    },
+    "claude-haiku-gemini-3-flash": {
+        "model": "gemini-3-flash",
+        "labelOverride": "Gemini 3 Flash",
+        "supports1m": True,
+    },
+    "claude-haiku-gemini-3-5-flash-low": {
+        "model": "gemini-3.5-flash-low",
+        "labelOverride": "Gemini 3.5 Flash Low",
+        "supports1m": True,
+    },
+    "claude-fable-gemini-3-1-flash-image": {
+        "model": "gemini-3.1-flash-image",
+        "labelOverride": "Gemini 3.1 Flash Image",
+        "supports1m": True,
+    },
+    "claude-fable-gpt-oss-120b-medium": {
+        "model": "gpt-oss-120b-medium",
+        "labelOverride": "GPT-OSS 120B Medium",
         "supports1m": True,
     },
 }
 model_order = [
-    "claude-opus-4-6",
     "claude-sonnet-4-6",
-    "claude-haiku-4-5",
-    "claude-3-5-sonnet-20241022",
-    "claude-fable-5",
-    "claude-opus-4-8",
+    "claude-opus-gemini-3-1-pro-high",
+    "claude-sonnet-gemini-3-1-pro-low",
+    "claude-haiku-gemini-3-flash-agent",
+    "claude-haiku-gemini-3-flash",
+    "claude-haiku-gemini-3-5-flash-low",
+    "claude-fable-gemini-3-1-flash-image",
+    "claude-fable-gpt-oss-120b-medium",
 ]
 
 running_before = route_running()

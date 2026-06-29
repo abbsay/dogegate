@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1 - 2026-06-29
+
+- Change `repair-cowork` to expose a curated Antigravity Pool model menu that
+  mirrors the Codex CLI list instead of repeated Claude Sonnet/Opus labels.
+- Keep Cowork's underlying route ids Claude Desktop-safe while mapping them to
+  `claude-sonnet-4-6`, Gemini Pro/Flash variants, image Flash, and
+  `gpt-oss-120b-medium` upstream models.
+- Preserve Codex OAuth and the direct Claude Code CLI route while refreshing the
+  Claude-3p model profile.
+
 ## 0.4.0 - 2026-06-28
 
 - Promote the Codex OAuth switching and Claude Cowork gateway repair work as

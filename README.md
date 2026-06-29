@@ -286,16 +286,24 @@ If Cowork shows `API Error: 400 Request contains an invalid argument`, run:
 ./bin/codex-ccswitch-antigravity repair-cowork
 ```
 
-The repair keeps Cowork aliases on Claude-family upstream models:
+The repair keeps Cowork's internal route ids Claude-safe, but shows a curated
+Antigravity Pool menu similar to Codex CLI:
 
 ```text
-claude-opus-4-8 -> claude-opus-4-6
-claude-fable-5  -> claude-sonnet-4-6
-claude-haiku-4-5 -> claude-sonnet-4-6
+Claude Sonnet 4.6
+Gemini 3.1 Pro High
+Gemini 3.1 Pro Low
+Gemini 3 Flash Agent
+Gemini 3 Flash
+Gemini 3.5 Flash Low
+Gemini 3.1 Flash Image
+GPT-OSS 120B Medium
 ```
 
-This avoids Gemini desktop beta/tool request failures while preserving the
-working Claude Code CLI config and Codex OAuth setup.
+The visible labels are Antigravity model names; the underlying profile still
+uses `claude-sonnet-*`, `claude-opus-*`, `claude-haiku-*`, and `claude-fable-*`
+route ids because Claude Desktop rejects arbitrary model ids. This preserves
+the working Claude Code CLI config and Codex OAuth setup.
 
 ## Doctor
 
