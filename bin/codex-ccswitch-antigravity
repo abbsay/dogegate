@@ -1139,7 +1139,6 @@ proxy_origin = f"http://{proxy_host}:{proxy_port}"
 gateway_url = f"{proxy_origin}/claude-desktop"
 profile_id = "00000000-0000-4000-8000-000000157210"
 paths = {
-    "db": Path(db_path),
     "cc_settings": settings_path,
     "claude_settings": home / ".claude" / "settings.json",
     "cowork_profile": home / "Library" / "Application Support" / "Claude-3p" / "configLibrary" / f"{profile_id}.json",
@@ -1182,41 +1181,53 @@ safe_routes = {
     "claude-sonnet-4-6": {
         "model": "claude-sonnet-4-6",
         "labelOverride": "Claude Sonnet 4.6",
+        "anthropicFamilyTier": "sonnet",
+        "isFamilyDefault": True,
         "supports1m": True,
     },
     "claude-opus-gemini-3-1-pro-high": {
         "model": "gemini-3.1-pro-high",
         "labelOverride": "Gemini 3.1 Pro High",
+        "anthropicFamilyTier": "opus",
+        "isFamilyDefault": True,
         "supports1m": True,
     },
     "claude-sonnet-gemini-3-1-pro-low": {
         "model": "gemini-3.1-pro-low",
         "labelOverride": "Gemini 3.1 Pro Low",
+        "anthropicFamilyTier": "sonnet",
         "supports1m": True,
     },
     "claude-haiku-gemini-3-flash-agent": {
         "model": "gemini-3-flash-agent",
         "labelOverride": "Gemini 3 Flash Agent",
+        "anthropicFamilyTier": "haiku",
+        "isFamilyDefault": True,
         "supports1m": True,
     },
     "claude-haiku-gemini-3-flash": {
         "model": "gemini-3-flash",
         "labelOverride": "Gemini 3 Flash",
+        "anthropicFamilyTier": "haiku",
         "supports1m": True,
     },
     "claude-haiku-gemini-3-5-flash-low": {
         "model": "gemini-3.5-flash-low",
         "labelOverride": "Gemini 3.5 Flash Low",
+        "anthropicFamilyTier": "haiku",
         "supports1m": True,
     },
     "claude-fable-gemini-3-1-flash-image": {
         "model": "gemini-3.1-flash-image",
         "labelOverride": "Gemini 3.1 Flash Image",
+        "anthropicFamilyTier": "fable",
+        "isFamilyDefault": True,
         "supports1m": True,
     },
     "claude-fable-gpt-oss-120b-medium": {
         "model": "gpt-oss-120b-medium",
         "labelOverride": "GPT-OSS 120B Medium",
+        "anthropicFamilyTier": "fable",
         "supports1m": True,
     },
 }
@@ -1281,11 +1292,22 @@ if not dry_run:
     profile["inferenceGatewayAuthScheme"] = "Bearer"
     profile["inferenceGatewayBaseUrl"] = gateway_url
     profile["inferenceProvider"] = "gateway"
+    profile["modelDiscoveryEnabled"] = False
     if routes_patched:
         profile["inferenceModels"] = [
             {
                 "name": name,
                 "labelOverride": safe_routes[name]["labelOverride"],
+                **(
+                    {"anthropicFamilyTier": safe_routes[name]["anthropicFamilyTier"]}
+                    if "anthropicFamilyTier" in safe_routes[name]
+                    else {}
+                ),
+                **(
+                    {"isFamilyDefault": safe_routes[name]["isFamilyDefault"]}
+                    if "isFamilyDefault" in safe_routes[name]
+                    else {}
+                ),
                 "supports1m": safe_routes[name]["supports1m"],
             }
             for name in model_order

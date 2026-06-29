@@ -198,7 +198,8 @@ The installer backs up files first, then patches:
   - points `model.base_url` at Antigravity Pool
   - sets `model.max_tokens: 4096` for pool compatibility
 
-The opt-in `repair-cowork` command additionally backs up and patches:
+The opt-in `repair-cowork` command additionally backs up the small JSON files it
+may restore and patches:
 
 - `~/.cc-switch/cc-switch.db`
   - repairs the current `claude-desktop` Antigravity provider model routes
@@ -206,6 +207,8 @@ The opt-in `repair-cowork` command additionally backs up and patches:
 - `~/Library/Application Support/Claude-3p/configLibrary/`
   - points Cowork at `http://127.0.0.1:15721/claude-desktop`
   - refreshes the visible model list with Claude-family labels
+  - pins Claude Desktop 3P model discovery off for the fixed model list
+  - maps the curated models to Claude family tiers for the Code tab model picker
 - `~/.claude/settings.json`
   - only when the local route is stopped, temporarily uses it to start the CC
     Switch route and then restores the original file immediately
@@ -303,7 +306,10 @@ GPT-OSS 120B Medium
 The visible labels are Antigravity model names; the underlying profile still
 uses `claude-sonnet-*`, `claude-opus-*`, `claude-haiku-*`, and `claude-fable-*`
 route ids because Claude Desktop rejects arbitrary model ids. This preserves
-the working Claude Code CLI config and Codex OAuth setup.
+the working Claude Code CLI config and Codex OAuth setup. The profile also sets
+Claude 3P tier metadata so the Code tab can resolve its internal `sonnet`,
+`opus`, `haiku`, and `fable` shortcuts to the curated gateway models instead of
+showing an empty `Default model` picker.
 
 ## Doctor
 

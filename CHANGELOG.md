@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.2 - 2026-06-29
+
+- Add Claude Desktop 3P `anthropicFamilyTier` and `isFamilyDefault` metadata to
+  the curated Cowork model profile so the Code tab does not show an empty
+  `Default model` picker.
+- Disable Cowork model discovery for the fixed Antigravity Pool profile so the
+  desktop app does not depend on gateway model discovery to populate the menu.
+- Stop `repair-cowork` from copying the full multi-GB CC Switch database into
+  each backup; the command now backs up only the small JSON files it actually
+  restores.
+
 ## 0.4.1 - 2026-06-29
 
 - Change `repair-cowork` to expose a curated Antigravity Pool model menu that
