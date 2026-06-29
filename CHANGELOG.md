@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3 - 2026-06-29
+
+- Rename the curated Cowork gateway route ids to clean Claude-like model names
+  such as `claude-opus-4-6` and `claude-haiku-4-5` so Claude Desktop 3P config
+  validation accepts `inferenceModels`.
+- Keep the Antigravity display labels and upstream mappings unchanged; only the
+  local route ids avoid non-Anthropic keywords like `gemini` and `gpt`.
+
 ## 0.4.2 - 2026-06-29
 
 - Add Claude Desktop 3P `anthropicFamilyTier` and `isFamilyDefault` metadata to

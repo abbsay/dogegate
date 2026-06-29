@@ -305,11 +305,13 @@ GPT-OSS 120B Medium
 
 The visible labels are Antigravity model names; the underlying profile still
 uses `claude-sonnet-*`, `claude-opus-*`, `claude-haiku-*`, and `claude-fable-*`
-route ids because Claude Desktop rejects arbitrary model ids. This preserves
-the working Claude Code CLI config and Codex OAuth setup. The profile also sets
-Claude 3P tier metadata so the Code tab can resolve its internal `sonnet`,
-`opus`, `haiku`, and `fable` shortcuts to the curated gateway models instead of
-showing an empty `Default model` picker.
+route ids because Claude Desktop rejects arbitrary model ids. The route ids
+avoid non-Anthropic keywords such as `gemini` and `gpt`; CC Switch maps them to
+the real Antigravity upstream models. This preserves the working Claude Code CLI
+config and Codex OAuth setup. The profile also sets Claude 3P tier metadata so
+the Code tab can resolve its internal `sonnet`, `opus`, `haiku`, and `fable`
+shortcuts to the curated gateway models instead of showing an empty
+`Default model` picker.
 
 ## Doctor
 
