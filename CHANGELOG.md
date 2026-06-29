@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4 - 2026-06-29
+
+- Promote the confirmed Claude Desktop 3P/Cowork model picker fix as the
+  current working release after validating the Claude-safe route ids on macOS.
+
 ## 0.4.3 - 2026-06-29
 
 - Rename the curated Cowork gateway route ids to clean Claude-like model names
