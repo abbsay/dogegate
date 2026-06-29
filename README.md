@@ -294,10 +294,11 @@ Antigravity Pool menu similar to Codex CLI:
 
 ```text
 Claude Sonnet 4.6
+Claude Opus 4.6
 Gemini 3.1 Pro High
 Gemini 3.1 Pro Low
-Gemini 3 Flash Agent
-Gemini 3 Flash
+Gemini 3.5 Flash High
+Gemini 3.5 Flash Medium
 Gemini 3.5 Flash Low
 Gemini 3.1 Flash Image
 GPT-OSS 120B Medium

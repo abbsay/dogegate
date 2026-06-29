@@ -1186,10 +1186,16 @@ safe_routes = {
         "supports1m": True,
     },
     "claude-opus-4-6": {
+        "model": "claude-opus-4-6",
+        "labelOverride": "Claude Opus 4.6",
+        "anthropicFamilyTier": "opus",
+        "isFamilyDefault": True,
+        "supports1m": True,
+    },
+    "claude-opus-4-5": {
         "model": "gemini-3.1-pro-high",
         "labelOverride": "Gemini 3.1 Pro High",
         "anthropicFamilyTier": "opus",
-        "isFamilyDefault": True,
         "supports1m": True,
     },
     "claude-sonnet-4-5": {
@@ -1200,19 +1206,19 @@ safe_routes = {
     },
     "claude-haiku-4-5": {
         "model": "gemini-3-flash-agent",
-        "labelOverride": "Gemini 3 Flash Agent",
+        "labelOverride": "Gemini 3.5 Flash High",
         "anthropicFamilyTier": "haiku",
         "isFamilyDefault": True,
         "supports1m": True,
     },
     "claude-haiku-4-1": {
-        "model": "gemini-3-flash",
-        "labelOverride": "Gemini 3 Flash",
+        "model": "gemini-3.5-flash-low",
+        "labelOverride": "Gemini 3.5 Flash Medium",
         "anthropicFamilyTier": "haiku",
         "supports1m": True,
     },
     "claude-haiku-3-5": {
-        "model": "gemini-3.5-flash-low",
+        "model": "gemini-3.5-flash-extra-low",
         "labelOverride": "Gemini 3.5 Flash Low",
         "anthropicFamilyTier": "haiku",
         "supports1m": True,
@@ -1234,6 +1240,7 @@ safe_routes = {
 model_order = [
     "claude-sonnet-4-6",
     "claude-opus-4-6",
+    "claude-opus-4-5",
     "claude-sonnet-4-5",
     "claude-haiku-4-5",
     "claude-haiku-4-1",

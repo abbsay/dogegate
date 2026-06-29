@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.5 - 2026-06-29
+
+- Refine the Claude Desktop/Cowork model picker by adding a visible
+  `Claude Opus 4.6` entry.
+- Replace the `Gemini 3 Flash` and `Gemini 3 Flash Agent` labels with a fuller
+  `Gemini 3.5 Flash` Low/Medium/High set while keeping Claude-safe route ids.
+
 ## 0.4.4 - 2026-06-29
 
 - Promote the confirmed Claude Desktop 3P/Cowork model picker fix as the
