@@ -90,7 +90,9 @@ install by default:
 - reads the local proxy port and API key from `gui_config.json`
 - queries `/v1/models` for the current model catalog
 - merges that live catalog with Dogegate's known working agent aliases
-- writes the merged catalog to CC Switch, OpenClaw, and Hermes
+- writes the merged catalog to OpenClaw and Hermes
+- writes a curated Codex Desktop model picker catalog to CC Switch and
+  `~/.codex/cc-switch-model-catalog.json`
 - keeps OpenClaw on a narrower agent-safe allowlist
 
 Disable this behavior with `--no-auto-antigravity`, or override the catalog
@@ -101,6 +103,21 @@ merging Dogegate's known aliases, the install catalog contains 72 models,
 including Claude, Gemini, GPT-compatible, image, and thinking variants. OpenClaw
 still uses a narrower agent-safe allowlist because agent/tool-shaped requests
 are stricter than simple chat requests.
+
+Codex Desktop intentionally uses a smaller curated picker list so third-party
+mode is readable:
+
+```text
+Gemini 3.1 Pro High
+Gemini 3.1 Pro Low
+Gemini 3.5 Flash High
+Gemini 3.5 Flash Medium
+Gemini 3.5 Flash Low
+Gemini 3.1 Flash Image
+Claude Sonnet 4.6
+Claude Opus 4.6
+GPT-OSS 120B Medium
+```
 
 Antigravity Tools LS is a standby path with a different architecture: it bridges
 through the native Antigravity language-server process and exposes standard
@@ -173,6 +190,8 @@ or the direct Claude Code CLI route:
 The installer backs up files first, then patches:
 
 - `~/.cc-switch/cc-switch.db`
+  - writes a compact `cc-switch-state.YYYYMMDD-HHMMSS.json` backup snapshot
+    instead of copying the multi-GB SQLite database
   - `providers.settings_config` for the selected Codex provider
   - sanitizes `settings.common_config_codex` when older Dogegate installs left
     provider/model/model catalog/base URL/token fields there
@@ -185,6 +204,12 @@ The installer backs up files first, then patches:
   - writes the current live Codex provider block unless `--no-live-config` is set
   - uses `experimental_bearer_token = "PROXY_MANAGED"` for the local proxy route
     instead of overwriting official OAuth login state
+  - references the absolute
+    `model_catalog_json = "/Users/.../.codex/cc-switch-model-catalog.json"`
+    path for the curated third-party model picker
+- `~/.codex/cc-switch-model-catalog.json`
+  - writes the curated Codex Desktop third-party model picker with friendly
+    display names and a stable order
 - `~/.openclaw/openclaw.json`
   - points OpenClaw's OpenAI provider at Antigravity Pool
   - sets the default model to `openai/claude-sonnet-4-6`
@@ -216,20 +241,20 @@ may restore and patches:
 Default pool model list:
 
 ```text
-claude-sonnet-4-6
 gemini-3.1-pro-high
 gemini-3.1-pro-low
 gemini-3-flash-agent
-gemini-3-flash
 gemini-3.5-flash-low
+gemini-3.5-flash-extra-low
 gemini-3.1-flash-image
+claude-sonnet-4-6
+claude-opus-4-6
 gpt-oss-120b-medium
-claude-3-5-sonnet-20241022
 ```
 
 Override it with `--pool-models model-a,model-b`. `claude-sonnet-4-6`,
-`gemini-3-flash-agent`, `gemini-3-flash`, `gemini-3.5-flash-low`, and
-`claude-3-5-sonnet-20241022` have passed OpenClaw agent smoke tests. Some
+`gemini-3-flash-agent`, `gemini-3.5-flash-low`, and
+`gemini-3.5-flash-extra-low` have passed OpenClaw agent smoke tests. Some
 Gemini Pro/GPT-OSS routes may answer simple API calls but still reject
 agent-shaped requests with upstream schema errors.
 
@@ -238,9 +263,8 @@ OpenClaw uses a narrower default agent allowlist:
 ```text
 claude-sonnet-4-6
 gemini-3-flash-agent
-gemini-3-flash
 gemini-3.5-flash-low
-claude-3-5-sonnet-20241022
+gemini-3.5-flash-extra-low
 ```
 
 Override it with `--agent-models model-a,model-b`. Dogegate clears stale
@@ -275,6 +299,47 @@ merges common config into every Codex provider that opts into common config,
 including `OpenAI Official`. Dogegate therefore keeps the Antigravity route in
 the `Antigravity-Pool` provider itself and only leaves non-routing shared TOML
 in common config, such as plugin, MCP, desktop, or project trust settings.
+
+## Codex Desktop Model Picker
+
+Codex Desktop third-party mode reads `model_catalog_json` from
+`~/.codex/config.toml`. Dogegate writes the absolute
+`~/.codex/cc-switch-model-catalog.json` path with a small Antigravity Pool menu
+instead of exposing every `/v1/models` entry:
+
+```text
+Gemini 3.1 Pro High
+Gemini 3.1 Pro Low
+Gemini 3.5 Flash High
+Gemini 3.5 Flash Medium
+Gemini 3.5 Flash Low
+Gemini 3.1 Flash Image
+Claude Sonnet 4.6
+Claude Opus 4.6
+GPT-OSS 120B Medium
+```
+
+The display names are friendly labels. The underlying model ids remain the
+known working Antigravity routes, so Codex CLI can still pass explicit model ids
+with `codex -m`.
+
+To verify the exact list Codex Desktop's app-server will expose after a fresh
+start, run:
+
+```bash
+./bin/codex-ccswitch-antigravity verify-desktop-models
+```
+
+If this command shows the nine models but the running UI still shows
+`Custom` / `自定义`, fully quit and reopen Codex Desktop. `model_catalog_json`
+is read when the Codex app-server starts, so an already-running Desktop process
+can keep an older model list until the app is restarted.
+
+Known limitation: Codex Desktop can use the configured third-party model route,
+but some Desktop builds still render custom providers as `Custom` / `自定义` in
+the composer instead of showing the full selectable third-party model list.
+Codex CLI and `verify-desktop-models` can still confirm the catalog that Codex
+core sees.
 
 ## Claude Cowork
 
@@ -411,11 +476,15 @@ Backups are written to:
 Restore manually:
 
 ```bash
-cp ~/.cc-switch/backups/codex-antigravity/cc-switch.db.YYYYMMDD-HHMMSS.bak ~/.cc-switch/cc-switch.db
 cp ~/.cc-switch/backups/codex-antigravity/config.toml.YYYYMMDD-HHMMSS.bak ~/.codex/config.toml
+cp ~/.cc-switch/backups/codex-antigravity/cc-switch-model-catalog.json.YYYYMMDD-HHMMSS.bak ~/.codex/cc-switch-model-catalog.json
 cp ~/.cc-switch/backups/codex-antigravity/settings.json.YYYYMMDD-HHMMSS.bak ~/.cc-switch/settings.json
 open -a "CC Switch"
 ```
+
+Dogegate 0.4.6+ stores Codex-related CC Switch rows in
+`cc-switch-state.YYYYMMDD-HHMMSS.json` for audit and manual recovery. Older
+releases may also leave full `cc-switch.db.*.bak` files in the same directory.
 
 ## Release Plan
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.4.1"
+VERSION="0.4.6"
 
 usage() {
   cat <<'USAGE'
@@ -15,6 +15,7 @@ Usage:
   codex-ccswitch-antigravity install-openclaw [options]
   codex-ccswitch-antigravity install-hermes [options]
   codex-ccswitch-antigravity verify  [options]
+  codex-ccswitch-antigravity verify-desktop-models [options]
   codex-ccswitch-antigravity verify-agents [options]
   codex-ccswitch-antigravity open-openclaw-dashboard [options]
   codex-ccswitch-antigravity inspect-antigravity [options]
@@ -43,6 +44,7 @@ Options:
 
 Examples:
   codex-ccswitch-antigravity install --restart-ccswitch --run-verify
+  codex-ccswitch-antigravity verify-desktop-models
   codex-ccswitch-antigravity install-openclaw
   codex-ccswitch-antigravity install-hermes
   codex-ccswitch-antigravity verify-agents
@@ -84,8 +86,8 @@ shift || true
 
 PROVIDER_NAME="Antigravity-Pool"
 MODEL="claude-sonnet-4-6"
-POOL_MODELS="claude-sonnet-4-6,gemini-3.1-pro-high,gemini-3.1-pro-low,gemini-3-flash-agent,gemini-3-flash,gemini-3.5-flash-low,gemini-3.1-flash-image,gpt-oss-120b-medium,claude-3-5-sonnet-20241022"
-AGENT_MODELS="claude-sonnet-4-6,gemini-3-flash-agent,gemini-3-flash,gemini-3.5-flash-low,claude-3-5-sonnet-20241022"
+POOL_MODELS="gemini-3.1-pro-high,gemini-3.1-pro-low,gemini-3-flash-agent,gemini-3.5-flash-low,gemini-3.5-flash-extra-low,gemini-3.1-flash-image,claude-sonnet-4-6,claude-opus-4-6,gpt-oss-120b-medium"
+AGENT_MODELS="claude-sonnet-4-6,gemini-3-flash-agent,gemini-3.5-flash-low,gemini-3.5-flash-extra-low"
 PROXY_URL="http://127.0.0.1:15721/v1"
 UPSTREAM_URL="http://127.0.0.1:8045/v1"
 CCSWITCH_DB="~/.cc-switch/cc-switch.db"
@@ -249,7 +251,7 @@ def print_interesting_config(prefix: str, cfg: str) -> None:
     print(f"{prefix}_has_proxy_placeholder={'PROXY_MANAGED' in cfg}")
     for line in cfg.splitlines():
         stripped = line.strip()
-        if stripped.startswith(("model_provider", "model =", "base_url", "wire_api")):
+        if stripped.startswith(("model_provider", "model =", "model_catalog_json", "base_url", "wire_api")):
             print(f"{prefix}: {line}")
         elif stripped.startswith("experimental_bearer_token"):
             print(f"{prefix}: experimental_bearer_token = <redacted>")
@@ -274,8 +276,12 @@ if provider:
     payload = json.loads(provider[2])
     cfg = payload.get("config", "")
     auth = payload.get("auth") or {}
+    catalog = ((payload.get("modelCatalog") or {}).get("models") or [])
     print(f"provider_id={provider[0]}")
     print(f"provider_is_current={provider[1]}")
+    print(f"provider_model_catalog_count={len(catalog)}")
+    if catalog:
+        print("provider_model_catalog_models=" + ",".join((item.get("displayName") or item.get("model") or "") for item in catalog[:20]))
     print(
         "provider_has_api_key="
         f"{bool((auth.get('OPENAI_API_KEY') or '').strip() or extract_experimental_bearer_token(cfg))}"
@@ -296,6 +302,17 @@ if Path(codex_config).exists():
     text = Path(codex_config).read_text()
     print(f"codex_config={codex_config}")
     print_interesting_config("codex_config", text)
+    catalog_path = Path(codex_config).parent / "cc-switch-model-catalog.json"
+    if catalog_path.exists():
+        try:
+            catalog_payload = json.loads(catalog_path.read_text())
+            catalog_models = catalog_payload.get("models") or []
+        except Exception:
+            catalog_models = []
+        print(f"codex_model_catalog={catalog_path}")
+        print(f"codex_model_catalog_count={len(catalog_models)}")
+        if catalog_models:
+            print("codex_model_catalog_models=" + ",".join((item.get("display_name") or item.get("slug") or "") for item in catalog_models[:20]))
 else:
     print(f"codex_config_missing={codex_config}")
 PY
@@ -315,13 +332,51 @@ install() {
     mkdir -p "$BACKUP_DIR"
     local stamp
     stamp="$(date +%Y%m%d-%H%M%S)"
-    cp "$CCSWITCH_DB" "$BACKUP_DIR/cc-switch.db.$stamp.bak"
+    python3 - "$CCSWITCH_DB" "$PROVIDER_NAME" "$BACKUP_DIR/cc-switch-state.$stamp.json" <<'PY'
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+db_path, provider_name, output_path = sys.argv[1:]
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+
+def rows(query, params=()):
+    try:
+        return [dict(row) for row in conn.execute(query, params)]
+    except sqlite3.Error:
+        return []
+
+snapshot = {
+    "providers_codex": rows("select * from providers where app_type='codex'"),
+    "target_provider": rows(
+        "select * from providers where app_type='codex' and name=?",
+        (provider_name,),
+    ),
+    "proxy_config_codex": rows("select * from proxy_config where app_type='codex'"),
+    "proxy_live_backup_codex": rows("select * from proxy_live_backup where app_type='codex'"),
+    "settings_codex": rows(
+        """
+        select * from settings
+        where key in ('common_config_codex', 'currentProviderCodex', 'preserveCodexOfficialAuthOnSwitch')
+           or key like '%codex%'
+        """
+    ),
+}
+conn.close()
+Path(output_path).write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n")
+PY
     [[ ! -f "$CODEX_CONFIG" ]] || cp "$CODEX_CONFIG" "$BACKUP_DIR/config.toml.$stamp.bak"
+    local codex_catalog
+    codex_catalog="$(dirname "$CODEX_CONFIG")/cc-switch-model-catalog.json"
+    [[ ! -f "$codex_catalog" ]] || cp "$codex_catalog" "$BACKUP_DIR/cc-switch-model-catalog.json.$stamp.bak"
     [[ ! -f "$SETTINGS_JSON" ]] || cp "$SETTINGS_JSON" "$BACKUP_DIR/settings.json.$stamp.bak"
     echo "backup_dir=$BACKUP_DIR"
   fi
 
   python3 - "$CCSWITCH_DB" "$CODEX_CONFIG" "$SETTINGS_JSON" "$PROVIDER_NAME" "$MODEL" "$POOL_MODELS" "$PROXY_URL" "$UPSTREAM_URL" "$PATCH_LIVE_CONFIG" "$SELECT_PROVIDER" "$PRESERVE_CODEX_AUTH" "$DRY_RUN" <<'PY'
+import copy
 import json
 import sqlite3
 import sys
@@ -360,6 +415,33 @@ def normalize_pool_models(raw: str, default_model: str) -> list[str]:
 
 pool_models = normalize_pool_models(pool_models_csv, model)
 
+CODEX_MODEL_CATALOG_JSON = "cc-switch-model-catalog.json"
+CODEX_MENU_MODELS = [
+    ("gemini-3.1-pro-high", "Gemini 3.1 Pro High"),
+    ("gemini-3.1-pro-low", "Gemini 3.1 Pro Low"),
+    ("gemini-3-flash-agent", "Gemini 3.5 Flash High"),
+    ("gemini-3.5-flash-low", "Gemini 3.5 Flash Medium"),
+    ("gemini-3.5-flash-extra-low", "Gemini 3.5 Flash Low"),
+    ("gemini-3.1-flash-image", "Gemini 3.1 Flash Image"),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+    ("claude-opus-4-6", "Claude Opus 4.6"),
+    ("gpt-oss-120b-medium", "GPT-OSS 120B Medium"),
+]
+
+def build_codex_menu_models(default_model: str) -> list[dict]:
+    seen = set()
+    models = []
+    for model_id, display_name in CODEX_MENU_MODELS:
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append({"model": model_id, "displayName": display_name})
+    if default_model and default_model not in seen:
+        models.insert(0, {"model": default_model, "displayName": default_model})
+    return models
+
+codex_menu_models = build_codex_menu_models(model)
+
 def read_antigravity_api_key() -> str:
     cfg_path = Path.home() / ".antigravity_tools" / "gui_config.json"
     if not cfg_path.exists():
@@ -379,6 +461,7 @@ TOP_LEVEL_KEYS = {
     "base_url",
     "wire_api",
     "experimental_bearer_token",
+    "model_catalog_json",
 }
 COMMON_ROUTE_KEYS = TOP_LEVEL_KEYS | {"model_catalog_json", "model_reasoning_effort"}
 
@@ -422,6 +505,8 @@ def transform_config(text: str, provider_url: str, bearer_token: str = "") -> st
     ]
     if not saw_reasoning:
         header.append('model_reasoning_effort = "medium"')
+    catalog_path = Path(codex_config).parent / CODEX_MODEL_CATALOG_JSON
+    header.append(f"model_catalog_json = {toml_string(str(catalog_path))}")
 
     provider = [
         "",
@@ -485,6 +570,77 @@ def sanitize_common_config(text: str) -> str:
     body = "\n".join(kept).strip()
     return body + "\n" if body else ""
 
+def fallback_catalog_entry(model_id: str, display_name: str, priority: int) -> dict:
+    return {
+        "additional_speed_tiers": [],
+        "apply_patch_tool_type": "freeform",
+        "availability_nux": None,
+        "context_window": 1000000,
+        "default_reasoning_level": "medium",
+        "default_reasoning_summary": "none",
+        "default_verbosity": "low",
+        "description": display_name,
+        "display_name": display_name,
+        "effective_context_window_percent": 95,
+        "experimental_supported_tools": [],
+        "input_modalities": ["text", "image"],
+        "max_context_window": 1000000,
+        "priority": priority,
+        "service_tiers": [],
+        "shell_type": "shell_command",
+        "slug": model_id,
+        "support_verbosity": True,
+        "supported_in_api": True,
+        "supported_reasoning_levels": [
+            {"description": "Fast responses with lighter reasoning", "effort": "low"},
+            {"description": "Balances speed and reasoning depth for everyday tasks", "effort": "medium"},
+            {"description": "Greater reasoning depth for complex problems", "effort": "high"},
+            {"description": "Extra high reasoning depth for complex problems", "effort": "xhigh"},
+        ],
+        "supports_image_detail_original": True,
+        "supports_parallel_tool_calls": True,
+        "supports_reasoning_summaries": True,
+        "supports_search_tool": True,
+        "truncation_policy": {"mode": "auto"},
+        "upgrade": None,
+        "visibility": "list",
+        "web_search_tool_type": "text_and_image",
+    }
+
+def build_codex_catalog_payload(catalog_path: Path, menu_models: list[dict]) -> dict:
+    templates = {}
+    default_template = None
+    if catalog_path.exists():
+        try:
+            existing = json.loads(catalog_path.read_text()).get("models") or []
+        except Exception:
+            existing = []
+        for entry in existing:
+            slug = entry.get("slug")
+            if slug and slug not in templates:
+                templates[slug] = entry
+        if existing:
+            default_template = existing[0]
+
+    models = []
+    for index, item in enumerate(menu_models):
+        model_id = item["model"]
+        display_name = item["displayName"]
+        template = templates.get(model_id) or default_template
+        entry = copy.deepcopy(template) if isinstance(template, dict) else fallback_catalog_entry(model_id, display_name, 1000 + index)
+        entry.update({
+            "slug": model_id,
+            "display_name": display_name,
+            "description": display_name,
+            "priority": 1000 + index,
+            "visibility": "list",
+            "context_window": entry.get("context_window") or 1000000,
+            "max_context_window": entry.get("max_context_window") or 1000000,
+            "supported_in_api": True,
+        })
+        models.append(entry)
+    return {"models": models}
+
 conn = sqlite3.connect(db_path)
 conn.row_factory = sqlite3.Row
 provider = conn.execute(
@@ -505,13 +661,15 @@ if provider_api_key:
 provider_payload["modelCatalog"] = {
     "models": [
         {
-            "model": model_id,
-            "displayName": model_id,
+            "model": item["model"],
+            "displayName": item["displayName"],
             "contextWindow": 1000000,
         }
-        for model_id in pool_models
+        for item in codex_menu_models
     ]
 }
+codex_catalog_path = Path(codex_config).parent / CODEX_MODEL_CATALOG_JSON
+codex_catalog_payload = build_codex_catalog_payload(codex_catalog_path, codex_menu_models)
 
 updates = []
 updates.append(("provider.settings_config", provider_payload["config"]))
@@ -550,13 +708,17 @@ if dry_run:
     for name, value in updates:
         print(f"--- {name} ---")
         for line in value.splitlines():
-            if line.strip().startswith(("model_provider", "model =", "review_model", "base_url", "wire_api", "[model_providers.custom]")):
+            if line.strip().startswith(("model_provider", "model =", "review_model", "model_catalog_json", "base_url", "wire_api", "[model_providers.custom]")):
                 print(line)
             elif line.strip().startswith("experimental_bearer_token"):
                 print("experimental_bearer_token = <redacted>")
     print(f"provider_auth_update={bool(antigravity_api_key)}")
     print(f"provider_has_api_key={bool(provider_api_key)}")
-    print(f"provider_model_catalog_count={len(pool_models)}")
+    print(f"pool_models_count={len(pool_models)}")
+    print(f"codex_model_catalog={codex_catalog_path}")
+    print(f"codex_model_catalog_count={len(codex_menu_models)}")
+    print("codex_model_catalog_models=" + ",".join(item["displayName"] for item in codex_menu_models))
+    print("codex_desktop_restart_required=True")
     print(f"common_config_sanitized={common_changed}")
     print(f"proxy_config_update={proxy_update_label}")
     print(f"preserve_codex_official_auth_on_switch={preserve_codex_auth}")
@@ -600,6 +762,8 @@ conn.close()
 
 if live_text is not None:
     Path(codex_config).write_text(live_text)
+codex_catalog_path.parent.mkdir(parents=True, exist_ok=True)
+codex_catalog_path.write_text(json.dumps(codex_catalog_payload, ensure_ascii=False, indent=2) + "\n")
 
 settings_path = Path(settings_json)
 if select_provider or preserve_codex_auth:
@@ -623,6 +787,9 @@ print(f"codex_live_proxy={proxy_url}")
 print(f"ccswitch_upstream={upstream_url}")
 print(f"provider_auth_update={bool(antigravity_api_key)}")
 print(f"provider_has_api_key={bool(provider_api_key)}")
+print(f"codex_model_catalog={codex_catalog_path}")
+print(f"codex_model_catalog_count={len(codex_menu_models)}")
+print("codex_desktop_restart_required=True")
 print(f"common_config_sanitized={common_changed}")
 print(f"proxy_config_update={proxy_update_label}")
 print(f"preserve_codex_official_auth_on_switch={preserve_codex_auth}")
@@ -642,6 +809,131 @@ PY
 verify() {
   need_cmd codex
   codex --ask-for-approval never --sandbox read-only exec "Reply with exactly: pong"
+}
+
+verify_desktop_models() {
+  need_cmd python3
+  python3 - "$CODEX_CONFIG" <<'PY'
+import json
+import os
+import select
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+codex_config = Path(sys.argv[1])
+expected = [
+    ("gemini-3.1-pro-high", "Gemini 3.1 Pro High"),
+    ("gemini-3.1-pro-low", "Gemini 3.1 Pro Low"),
+    ("gemini-3-flash-agent", "Gemini 3.5 Flash High"),
+    ("gemini-3.5-flash-low", "Gemini 3.5 Flash Medium"),
+    ("gemini-3.5-flash-extra-low", "Gemini 3.5 Flash Low"),
+    ("gemini-3.1-flash-image", "Gemini 3.1 Flash Image"),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+    ("claude-opus-4-6", "Claude Opus 4.6"),
+    ("gpt-oss-120b-medium", "GPT-OSS 120B Medium"),
+]
+
+codex_bin = os.environ.get("CODEX_CLI_PATH") or "/Applications/Codex.app/Contents/Resources/codex"
+if not Path(codex_bin).exists():
+    resolved = shutil.which("codex")
+    if not resolved:
+        raise SystemExit("codex binary not found")
+    codex_bin = resolved
+
+def send(proc, payload):
+    proc.stdin.write(json.dumps(payload) + "\n")
+    proc.stdin.flush()
+
+def read_response(proc, request_id, timeout=30):
+    deadline = time.time() + timeout
+    stderr = []
+    while time.time() < deadline:
+        ready, _, _ = select.select([proc.stdout, proc.stderr], [], [], 0.2)
+        for stream in ready:
+            line = stream.readline()
+            if not line:
+                continue
+            if stream is proc.stderr:
+                stderr.append(line)
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if obj.get("id") == request_id:
+                return obj, "".join(stderr)
+    return None, "".join(stderr)
+
+proc = subprocess.Popen(
+    [codex_bin, "app-server", "--stdio"],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    bufsize=0,
+)
+try:
+    send(proc, {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "clientInfo": {
+                "name": "dogegate-desktop-model-check",
+                "title": "Dogegate Desktop Model Check",
+                "version": "0",
+            },
+            "capabilities": {
+                "experimentalApi": True,
+                "requestAttestation": False,
+                "mcpServerOpenaiFormElicitation": False,
+                "optOutNotificationMethods": [],
+            },
+        },
+    })
+    init, stderr = read_response(proc, 1)
+    if init is None or "error" in init:
+        raise SystemExit(f"app-server initialize failed: {init or stderr.strip()}")
+
+    send(proc, {"jsonrpc": "2.0", "method": "initialized"})
+    send(proc, {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "model/list",
+        "params": {"includeHidden": True, "cursor": None, "limit": 100},
+    })
+    response, stderr = read_response(proc, 2)
+    if response is None or "error" in response:
+        raise SystemExit(f"app-server model/list failed: {response or stderr.strip()}")
+finally:
+    proc.kill()
+    try:
+        proc.wait(timeout=2)
+    except Exception:
+        pass
+
+models = response["result"].get("data") or []
+actual = [(item.get("model"), item.get("displayName")) for item in models]
+missing = [item for item in expected if item not in actual]
+extra = [item for item in actual if item not in expected]
+catalog_path = codex_config.parent / "cc-switch-model-catalog.json"
+
+print(f"codex_binary={codex_bin}")
+print(f"codex_config={codex_config}")
+print(f"codex_model_catalog={catalog_path}")
+print(f"desktop_model_list_count={len(models)}")
+for model_id, display_name in actual:
+    print(f"desktop_model={display_name} => {model_id}")
+print(f"desktop_model_list_matches_expected={not missing and not extra}")
+if missing:
+    print("desktop_model_list_missing=" + ",".join(name for _, name in missing))
+if extra:
+    print("desktop_model_list_extra=" + ",".join(name or model_id or "" for model_id, name in extra))
+print("codex_desktop_restart_required_if_ui_still_shows_custom=True")
+PY
 }
 
 get_pool_token_python='
@@ -1518,6 +1810,7 @@ case "$COMMAND" in
   install-openclaw) install_openclaw ;;
   install-hermes) install_hermes ;;
   verify) verify ;;
+  verify-desktop-models) verify_desktop_models ;;
   verify-agents) verify_agents ;;
   open-openclaw-dashboard) open_openclaw_dashboard ;;
   inspect-antigravity) inspect_antigravity ;;

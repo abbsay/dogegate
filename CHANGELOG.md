@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.6 - 2026-06-29
+
+- Add a curated Codex Desktop third-party model picker catalog with friendly
+  Antigravity Pool display names for Codex CLI and fresh Codex app-server
+  validation.
+- Write an absolute `model_catalog_json` path for Codex custom provider configs
+  and keep the catalog to the same nine-model menu used for the polished
+  desktop picker.
+- Refresh the default pool and agent model lists around the validated Gemini
+  3.5 Flash aliases, Claude Sonnet/Opus 4.6, and GPT-OSS 120B route.
+- Add `verify-desktop-models` to exercise Codex Desktop's app-server
+  `model/list` path and confirm the UI-facing model catalog after a fresh
+  start.
+- Replace full multi-GB CC Switch database copies during `install` with a
+  compact JSON snapshot of the Codex-related rows.
+- Document that Codex Desktop must be fully restarted because
+  `model_catalog_json` is read when the app-server starts.
+- Known limitation: Codex Desktop can use the selected third-party model route,
+  but its current composer UI may still show `Custom` / `自定义` instead of a
+  full selectable third-party model list.
+
 ## 0.4.5 - 2026-06-29
 
 - Refine the Claude Desktop/Cowork model picker by adding a visible
